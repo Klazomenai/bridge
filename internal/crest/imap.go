@@ -37,7 +37,7 @@ func Poll(ctx context.Context, cfg IMAPConfig) ([]Message, error) {
 	if err != nil {
 		return nil, fmt.Errorf("imap dial %s: %w", addr, err)
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 
 	if err := c.Login(cfg.Username, cfg.Password).Wait(); err != nil {
 		return nil, fmt.Errorf("imap login: %w", err)
