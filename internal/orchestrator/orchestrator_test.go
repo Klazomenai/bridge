@@ -198,6 +198,18 @@ func TestHandleAPIErrorPropagated(t *testing.T) {
 	}
 }
 
+func TestHandleErrorsOnEmptyTextResponse(t *testing.T) {
+	reg := newTestRegistry(t)
+	mgr := ctxbuf.NewManager(ctxbuf.DefaultMaxTurns)
+	// Return a message with no text blocks (e.g. tool-use only).
+	mock := &mockClaudeClient{response: &anthropic.Message{Content: []anthropic.ContentBlockUnion{}}}
+	o := orchestrator.NewWithClient(reg, mgr, mock)
+	_, err := o.Handle(t.Context(), "!room:server", "hello", "")
+	if err == nil {
+		t.Fatal("expected error for empty response, got nil")
+	}
+}
+
 func TestHandleRoutesToCrestWhenRequested(t *testing.T) {
 	o, mock := newTestOrchestrator(t)
 	resp, err := o.Handle(t.Context(), "!room:server", "check inbox", "crest")

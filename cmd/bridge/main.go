@@ -57,6 +57,7 @@ func main() {
 		CryptoDBPath: mustEnv("CRYPTO_DB_PATH", "/data/crypto-store/bridge.db"),
 		PickleKey:    mustEnv("PICKLE_KEY", ""),
 		DisplayName:  "Bridge",
+		KnownCrew:    registry.IDs(),
 	}
 	if botCfg.Homeserver == "" || botCfg.Username == "" || botCfg.Password == "" || botCfg.PickleKey == "" {
 		slog.Error("MATRIX_HOMESERVER, MATRIX_USERNAME, MATRIX_PASSWORD, and PICKLE_KEY are required")

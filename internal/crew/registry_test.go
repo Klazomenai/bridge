@@ -3,6 +3,7 @@ package crew_test
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"klazomenai/bridge/internal/crew"
@@ -205,6 +206,36 @@ crew:
 `,
 		},
 		{
+			name: "missing voice.model",
+			yaml: `
+default_crew: maren
+crew:
+  maren:
+    name: "Maren"
+    role: "Shipwright"
+    model: "claude-sonnet-4-6"
+    verbosity: dispatch
+    voice:
+      announces_as: "Maren:"
+    system_prompt: "prompt {verbosity}"
+`,
+		},
+		{
+			name: "missing voice.announces_as",
+			yaml: `
+default_crew: maren
+crew:
+  maren:
+    name: "Maren"
+    role: "Shipwright"
+    model: "claude-sonnet-4-6"
+    verbosity: dispatch
+    voice:
+      model: "x.onnx"
+    system_prompt: "prompt {verbosity}"
+`,
+		},
+		{
 			name: "unknown verbosity",
 			yaml: `
 default_crew: maren
@@ -266,6 +297,27 @@ func TestCrewGetters(t *testing.T) {
 	}
 }
 
+func TestRegistryIDs(t *testing.T) {
+	path := writeRegistry(t, validYAML)
+	r, err := crew.Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	ids := r.IDs()
+	if len(ids) != 2 {
+		t.Fatalf("expected 2 crew IDs, got %d: %v", len(ids), ids)
+	}
+	seen := make(map[string]bool)
+	for _, id := range ids {
+		seen[id] = true
+	}
+	for _, want := range []string{"maren", "crest"} {
+		if !seen[want] {
+			t.Errorf("expected ID %q in IDs(), got %v", want, ids)
+		}
+	}
+}
+
 func TestVerbosityInjectedInSystemPrompt(t *testing.T) {
 	path := writeRegistry(t, validYAML)
 	r, err := crew.Load(path)
@@ -281,20 +333,7 @@ func TestVerbosityInjectedInSystemPrompt(t *testing.T) {
 		t.Fatal("system prompt is empty")
 	}
 	// The literal placeholder must not appear in the rendered prompt.
-	for _, ph := range []string{"{verbosity}"} {
-		if contains := func(s, sub string) bool {
-			return len(s) >= len(sub) && (s == sub || len(s) > 0 && containsStr(s, sub))
-		}(maren.SystemPrompt(), ph); contains {
-			t.Errorf("system prompt still contains unresolved placeholder %q", ph)
-		}
+	if strings.Contains(maren.SystemPrompt(), "{verbosity}") {
+		t.Errorf("system prompt still contains unresolved placeholder {verbosity}")
 	}
-}
-
-func containsStr(s, sub string) bool {
-	for i := 0; i+len(sub) <= len(s); i++ {
-		if s[i:i+len(sub)] == sub {
-			return true
-		}
-	}
-	return false
 }

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"net/smtp"
+	"strings"
 )
 
 // SMTPConfig holds connection details for the ProtonMail bridge SMTP endpoint.
@@ -15,15 +16,23 @@ type SMTPConfig struct {
 	From     string
 }
 
+// sanitiseHeader strips CR and LF from a header field value to prevent
+// email header injection.
+func sanitiseHeader(s string) string {
+	s = strings.ReplaceAll(s, "\r", "")
+	s = strings.ReplaceAll(s, "\n", "")
+	return s
+}
+
 // SendMail sends a plain-text email via the ProtonMail bridge.
 func SendMail(cfg SMTPConfig, to, subject, body string) error {
 	addr := net.JoinHostPort(cfg.Host, fmt.Sprintf("%d", cfg.Port))
 	auth := smtp.PlainAuth("", cfg.Username, cfg.Password, cfg.Host)
 
 	msg := []byte(
-		"From: " + cfg.From + "\r\n" +
-			"To: " + to + "\r\n" +
-			"Subject: " + subject + "\r\n" +
+		"From: " + sanitiseHeader(cfg.From) + "\r\n" +
+			"To: " + sanitiseHeader(to) + "\r\n" +
+			"Subject: " + sanitiseHeader(subject) + "\r\n" +
 			"Content-Type: text/plain; charset=utf-8\r\n" +
 			"\r\n" +
 			body + "\r\n",

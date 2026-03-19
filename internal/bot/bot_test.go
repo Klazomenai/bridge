@@ -133,42 +133,42 @@ func TestRegisterHandlers(t *testing.T) {
 // --- extractCrewRequest tests (white-box, same package) ---
 
 func TestExtractCrewRequestComma(t *testing.T) {
-	got := extractCrewRequest("Crest, check the inbox please")
+	got := extractCrewRequest("Crest, check the inbox please", []string{"maren", "crest"})
 	if got != "crest" {
 		t.Errorf("expected crest, got %q", got)
 	}
 }
 
 func TestExtractCrewRequestColon(t *testing.T) {
-	got := extractCrewRequest("Maren: what do you think about this hull design?")
+	got := extractCrewRequest("Maren: what do you think about this hull design?", []string{"maren", "crest"})
 	if got != "maren" {
 		t.Errorf("expected maren, got %q", got)
 	}
 }
 
 func TestExtractCrewRequestOverTo(t *testing.T) {
-	got := extractCrewRequest("Maren, I'd like to hear from Crest — over to Crest on this one")
+	got := extractCrewRequest("Maren, I'd like to hear from Crest — over to Crest on this one", []string{"maren", "crest"})
 	if got != "crest" {
 		t.Errorf("expected crest, got %q", got)
 	}
 }
 
 func TestExtractCrewRequestNoMatch(t *testing.T) {
-	got := extractCrewRequest("What's the weather like?")
+	got := extractCrewRequest("What's the weather like?", []string{"maren", "crest"})
 	if got != "" {
 		t.Errorf("expected empty string, got %q", got)
 	}
 }
 
 func TestExtractCrewRequestCaseInsensitive(t *testing.T) {
-	got := extractCrewRequest("MAREN, strength check on this beam")
+	got := extractCrewRequest("MAREN, strength check on this beam", []string{"maren", "crest"})
 	if got != "maren" {
 		t.Errorf("expected maren, got %q", got)
 	}
 }
 
 func TestExtractCrewRequestOwnMessagesIgnored(t *testing.T) {
-	got := extractCrewRequest("I've been speaking to Maren about this already")
+	got := extractCrewRequest("I've been speaking to Maren about this already", []string{"maren", "crest"})
 	if got != "" {
 		t.Errorf("expected no match, got %q", got)
 	}

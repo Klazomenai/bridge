@@ -39,9 +39,10 @@ type Config struct {
 	Homeserver   string
 	Username     string
 	Password     string
-	CryptoDBPath string // path to SQLite DB for E2EE key persistence (PVC)
-	PickleKey    string // secret used to encrypt the olm account on disk
+	CryptoDBPath string   // path to SQLite DB for E2EE key persistence (PVC)
+	PickleKey    string   // secret used to encrypt the olm account on disk
 	DisplayName  string
+	KnownCrew    []string // crew IDs loaded from registry — used for routing
 }
 
 // Bot is the mautrix-go Matrix bot.
@@ -154,7 +155,7 @@ func (b *Bot) handleMessage(ctx context.Context, evt *event.Event) {
 		return
 	}
 
-	requestedCrew := extractCrewRequest(text)
+	requestedCrew := extractCrewRequest(text, b.cfg.KnownCrew)
 
 	slog.Info("bot: message received",
 		"room", evt.RoomID, "sender", evt.Sender,
@@ -194,18 +195,19 @@ func (s *matrixSender) Send(ctx context.Context, roomID id.RoomID, resp *orchest
 // extractCrewRequest returns the lowercase crew ID if the message routes to a
 // specific crew member, or "" to use the default.
 // "over to <crew>" anywhere in the message takes precedence over a prefix match.
-func extractCrewRequest(text string) string {
+// knownCrew must be lowercase crew IDs from the loaded registry.
+func extractCrewRequest(text string, knownCrew []string) string {
 	lower := strings.ToLower(text)
 
 	// "Over to <crew>" overrides prefix routing — check this first.
-	for _, c := range []string{"maren", "crest", "rhys", "finn", "sable", "vesper"} {
+	for _, c := range knownCrew {
 		if strings.Contains(lower, "over to "+c) {
 			return c
 		}
 	}
 
 	// Prefix routing: "<crew>," or "<crew>:".
-	for _, c := range []string{"maren", "crest", "rhys", "finn", "sable", "vesper"} {
+	for _, c := range knownCrew {
 		if strings.HasPrefix(lower, c+",") || strings.HasPrefix(lower, c+":") {
 			return c
 		}

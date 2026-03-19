@@ -101,8 +101,19 @@ func Poll(ctx context.Context, cfg IMAPConfig) ([]Message, error) {
 	return result, nil
 }
 
+// PollFn is the signature of a poll function used by PollerWithPollFn.
+// Exposed so tests can inject a synchronisable stub without time.Sleep.
+type PollFn func(ctx context.Context, cfg IMAPConfig) ([]Message, error)
+
 // Poller runs Poll on a fixed interval until ctx is cancelled.
 func Poller(ctx context.Context, cfg IMAPConfig, interval time.Duration, handler func([]Message)) {
+	PollerWithPollFn(ctx, cfg, interval, handler, Poll)
+}
+
+// PollerWithPollFn is like Poller but accepts a custom poll function.
+// Use this in tests to replace Poll with a stub that signals via a channel,
+// making the test deterministic without time.Sleep.
+func PollerWithPollFn(ctx context.Context, cfg IMAPConfig, interval time.Duration, handler func([]Message), pollFn PollFn) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
@@ -111,7 +122,7 @@ func Poller(ctx context.Context, cfg IMAPConfig, interval time.Duration, handler
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			msgs, err := Poll(ctx, cfg)
+			msgs, err := pollFn(ctx, cfg)
 			if err != nil {
 				slog.Error("crest: imap poll failed", "err", err)
 				continue

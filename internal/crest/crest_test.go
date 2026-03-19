@@ -2,7 +2,9 @@ package crest_test
 
 import (
 	"context"
+	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -60,31 +62,45 @@ func TestPollerExitsOnContextCancel(t *testing.T) {
 }
 
 func TestPollerTicksAndHandlesError(t *testing.T) {
-	// Start poller with a very short interval so the ticker fires before we cancel.
-	// Poll will fail (no IMAP server) — verify no panic and the handler is not called.
+	// Use PollerWithPollFn so we can synchronise on the first tick via a
+	// channel instead of time.Sleep (which is flaky on loaded CI runners).
 	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
 
 	cfg := crest.IMAPConfig{Host: "127.0.0.1", Port: 9993}
 	handlerCalls := 0
+
+	// tickDone is closed after the first poll attempt completes.
+	tickDone := make(chan struct{})
+	var once sync.Once
+	stubPoll := func(_ context.Context, _ crest.IMAPConfig) ([]crest.Message, error) {
+		once.Do(func() { close(tickDone) })
+		return nil, fmt.Errorf("simulated connection refused")
+	}
+
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		crest.Poller(ctx, cfg, 1*time.Millisecond, func(msgs []crest.Message) {
+		crest.PollerWithPollFn(ctx, cfg, 1*time.Millisecond, func(msgs []crest.Message) {
 			handlerCalls++
-		})
+		}, stubPoll)
 	}()
 
-	// Let at least one tick happen.
-	time.Sleep(20 * time.Millisecond)
+	// Wait until at least one tick has been attempted, then cancel.
+	select {
+	case <-tickDone:
+	case <-t.Context().Done():
+		t.Fatal("Poller did not tick within test deadline")
+	}
 	cancel()
 
 	select {
 	case <-done:
 	case <-t.Context().Done():
-		t.Fatal("Poller did not exit")
+		t.Fatal("Poller did not exit after context cancel")
 	}
 
-	// Handler should not have been called (poll fails on connect error).
+	// Handler should not have been called (poll returns error, not messages).
 	if handlerCalls > 0 {
 		t.Errorf("handler called unexpectedly: %d times", handlerCalls)
 	}

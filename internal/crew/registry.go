@@ -108,6 +108,12 @@ func validateEntry(id string, e crewEntryYAML) error {
 	if e.SystemPrompt == "" {
 		return fmt.Errorf("crew %s: system_prompt is required", id)
 	}
+	if e.Voice.Model == "" {
+		return fmt.Errorf("crew %s: voice.model is required", id)
+	}
+	if e.Voice.AnnouncesAs == "" {
+		return fmt.Errorf("crew %s: voice.announces_as is required", id)
+	}
 	return nil
 }
 
@@ -124,4 +130,13 @@ func (r *Registry) Default() Crew {
 // DefaultID returns the default crew ID.
 func (r *Registry) DefaultID() string {
 	return r.defaultCrew
+}
+
+// IDs returns all crew IDs in the registry.
+func (r *Registry) IDs() []string {
+	ids := make([]string, 0, len(r.crew))
+	for id := range r.crew {
+		ids = append(ids, id)
+	}
+	return ids
 }

@@ -117,6 +117,9 @@ func (o *Orchestrator) Handle(ctx context.Context, roomID, userText, requestedCr
 		}
 	}
 	text := strings.TrimSpace(sb.String())
+	if text == "" {
+		return nil, fmt.Errorf("anthropic returned no text content (got %d block(s), types may be tool-use only)", len(resp.Content))
+	}
 
 	// Add both turns to the context buffer.
 	buf.Add(userMsg)
