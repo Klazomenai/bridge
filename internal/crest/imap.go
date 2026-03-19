@@ -29,6 +29,10 @@ type Message struct {
 
 // Poll connects to the IMAP server, fetches unseen messages from the configured
 // mailbox, and returns them. The caller is responsible for marking them as seen.
+//
+// TODO(M2): imapclient.DialInsecure has no context parameter, so ctx cancellation
+// cannot abort in-flight dial/login/fetch calls. Add a net.Dialer timeout wrapper
+// when upgrading to a go-imap/v2 release that exposes context-aware dialling.
 func Poll(ctx context.Context, cfg IMAPConfig) ([]Message, error) {
 	addr := fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)
 

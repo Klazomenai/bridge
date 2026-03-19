@@ -30,6 +30,10 @@ func main() {
 		os.Exit(1)
 	}
 	apiKey := strings.TrimSpace(string(apiKeyBytes))
+	if apiKey == "" {
+		slog.Error("Anthropic API key is empty — check secret mount")
+		os.Exit(1)
+	}
 
 	// --- Crew registry ---
 	registryPath := mustEnv("CREW_REGISTRY_PATH", "/config/crew.yaml")

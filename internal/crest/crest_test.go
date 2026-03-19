@@ -9,42 +9,6 @@ import (
 	"klazomenai/bridge/internal/crest"
 )
 
-func TestTokenDeliverySubjectAndBody(t *testing.T) {
-	var lastTo, lastSubject, lastBody string
-
-	// Verify the subject and body constants via the token_delivery formatting.
-	// We capture the formatted output without actually sending email.
-	cfg := crest.SMTPConfig{
-		Host:     "127.0.0.1",
-		Port:     1025,
-		Username: "user",
-		Password: "pass",
-		From:     "bridge@klazomenai.dev",
-	}
-	_ = cfg
-
-	// Build the expected body content by calling the formatting logic directly.
-	// We test that SendRegistrationToken produces the correct content by
-	// inspecting the constants via an SMTP interceptor in integration tests.
-	// Here we verify the formatting constants at the package level.
-	subject := "[AKeyRA Bootstrap] Tuwunel Registration Token"
-	body := "A registration token for Tuwunel has been generated."
-
-	lastTo = "me@klazomenai.dev"
-	lastSubject = subject
-	lastBody = body
-
-	if !strings.Contains(lastTo, "klazomenai.dev") {
-		t.Error("expected captain email to contain klazomenai.dev")
-	}
-	if !strings.Contains(lastSubject, "Registration Token") {
-		t.Error("expected subject to mention Registration Token")
-	}
-	if !strings.Contains(lastBody, "registration token") {
-		t.Error("expected body to mention registration token")
-	}
-}
-
 func TestSMTPConfigValidation(t *testing.T) {
 	// A misconfigured SMTP host should return an error, not panic.
 	cfg := crest.SMTPConfig{
@@ -68,14 +32,10 @@ func TestIMAPPollNoMessagesReturnsEmptySlice(t *testing.T) {
 		Username: "u",
 		Password: "p",
 	}
-	// We expect a dial error; the important thing is no panic/hang.
-	msgs, err := crest.Poll(t.Context(), cfg)
+	// We expect a dial error because no server is listening.
+	_, err := crest.Poll(t.Context(), cfg)
 	if err == nil {
-		// If somehow we get no error (unlikely), we should get an empty slice.
-		if msgs == nil {
-			msgs = []crest.Message{}
-		}
-		t.Logf("unexpected success: %d messages", len(msgs))
+		t.Fatal("expected dial error connecting to non-existent IMAP server, got nil")
 	}
 }
 

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"go.mau.fi/util/dbutil"
@@ -74,7 +75,7 @@ func New(cfg Config, orch OrchestratorI) (*Bot, error) {
 // Start logs in, initialises E2EE, and begins syncing.
 // It blocks until ctx is cancelled.
 func (b *Bot) Start(ctx context.Context) error {
-	if err := os.MkdirAll(b.cfg.CryptoDBPath[:strings.LastIndex(b.cfg.CryptoDBPath, "/")], 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(b.cfg.CryptoDBPath), 0o700); err != nil {
 		return fmt.Errorf("create crypto store dir: %w", err)
 	}
 
