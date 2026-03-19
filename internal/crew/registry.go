@@ -58,6 +58,9 @@ func Load(path string) (*Registry, error) {
 	if cfg.DefaultCrew == "" {
 		return nil, fmt.Errorf("crew registry: default_crew is required")
 	}
+	if cfg.DefaultCrew != strings.ToLower(cfg.DefaultCrew) {
+		return nil, fmt.Errorf("crew registry: default_crew %q must be lowercase", cfg.DefaultCrew)
+	}
 
 	registry := &Registry{
 		defaultCrew: cfg.DefaultCrew,
@@ -65,6 +68,9 @@ func Load(path string) (*Registry, error) {
 	}
 
 	for id, entry := range cfg.Crew {
+		if id != strings.ToLower(id) {
+			return nil, fmt.Errorf("crew registry: crew ID %q must be lowercase", id)
+		}
 		if err := validateEntry(id, entry); err != nil {
 			return nil, err
 		}

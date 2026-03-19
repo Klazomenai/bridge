@@ -251,6 +251,22 @@ crew:
     system_prompt: "prompt"
 `,
 		},
+		{
+			name: "uppercase crew ID",
+			yaml: `
+default_crew: Maren
+crew:
+  Maren:
+    name: "Maren"
+    role: "Shipwright"
+    model: "claude-sonnet-4-6"
+    verbosity: dispatch
+    voice:
+      model: "x.onnx"
+      announces_as: "Maren:"
+    system_prompt: "prompt"
+`,
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
