@@ -34,6 +34,10 @@ type Sender interface {
 	Send(ctx context.Context, roomID id.RoomID, resp *orchestrator.Response) error
 }
 
+// DefaultCryptoDBPath is the default path for the E2EE crypto store SQLite DB.
+// It must match the PVC mount path configured in the Helm chart (cryptoStore.mountPath).
+const DefaultCryptoDBPath = "/var/lib/bridge/bridge.db"
+
 // Config holds bot connection parameters.
 type Config struct {
 	Homeserver   string
@@ -57,7 +61,7 @@ type Bot struct {
 // New creates a Bot but does not connect yet.
 func New(cfg Config, orch OrchestratorI) (*Bot, error) {
 	if cfg.CryptoDBPath == "" {
-		cfg.CryptoDBPath = "/var/lib/bridge/bridge.db"
+		cfg.CryptoDBPath = DefaultCryptoDBPath
 	}
 	if cfg.DisplayName == "" {
 		cfg.DisplayName = "Bridge"
