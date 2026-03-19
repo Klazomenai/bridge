@@ -14,9 +14,10 @@ RUN CGO_ENABLED=0 go build -tags goolm -trimpath \
     -o /out/bridge ./cmd/bridge
 
 # Create empty mount point directories. distroless/static is built from scratch
-# and contains neither /data nor /run; kubelet mounts volumes over these paths
-# at runtime. Without them in the image the behaviour is runtime-implementation-
-# specific — creating them here makes the contract explicit and portable.
+# and contains neither /var (e.g. /var/lib/bridge) nor /run; kubelet mounts
+# volumes over these paths at runtime. Without them in the image the behaviour
+# is runtime-implementation-specific — creating them here makes the contract
+# explicit and portable.
 RUN mkdir -p /staging/var/lib/bridge /staging/run/secrets/anthropic
 
 FROM gcr.io/distroless/static:nonroot
