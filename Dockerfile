@@ -23,8 +23,8 @@ RUN mkdir -p /staging/var/lib/bridge /staging/run/secrets/anthropic
 FROM gcr.io/distroless/static:nonroot
 
 COPY --from=builder /out/bridge /bridge
-COPY --from=builder /staging/var /var
-COPY --from=builder /staging/run /run
+COPY --chown=65532:65532 --from=builder /staging/var/lib/bridge /var/lib/bridge
+COPY --from=builder /staging/run/secrets/anthropic /run/secrets/anthropic
 COPY config/crew.yaml /config/crew.yaml
 
 USER nonroot
