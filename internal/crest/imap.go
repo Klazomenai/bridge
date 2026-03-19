@@ -114,6 +114,10 @@ func Poller(ctx context.Context, cfg IMAPConfig, interval time.Duration, handler
 // Use this in tests to replace Poll with a stub that signals via a channel,
 // making the test deterministic without time.Sleep.
 func PollerWithPollFn(ctx context.Context, cfg IMAPConfig, interval time.Duration, handler func([]Message), pollFn PollFn) {
+	if interval <= 0 {
+		slog.Error("crest: poller interval must be positive", "interval", interval)
+		return
+	}
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 

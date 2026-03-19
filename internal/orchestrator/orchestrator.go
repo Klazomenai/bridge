@@ -82,9 +82,12 @@ func (o *Orchestrator) Handle(ctx context.Context, roomID, userText, requestedCr
 	c := o.Route(requestedCrew)
 
 	// Cap and frame the user message to limit prompt injection surface.
-	// Use rune-based truncation to avoid splitting multi-byte UTF-8 sequences.
-	if runes := []rune(userText); len(runes) > maxUserMessageLen {
-		userText = string(runes[:maxUserMessageLen])
+	// Fast path: byte length <= cap means rune count must also be <= cap (UTF-8 invariant).
+	// Only pay for rune conversion on the uncommon long-message path.
+	if len(userText) > maxUserMessageLen {
+		if runes := []rune(userText); len(runes) > maxUserMessageLen {
+			userText = string(runes[:maxUserMessageLen])
+		}
 	}
 	framed := captainPrefix + userText
 

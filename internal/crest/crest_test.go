@@ -41,6 +41,23 @@ func TestIMAPPollNoMessagesReturnsEmptySlice(t *testing.T) {
 	}
 }
 
+func TestPollerNonPositiveIntervalReturnsImmediately(t *testing.T) {
+	cfg := crest.IMAPConfig{Host: "127.0.0.1", Port: 9997}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		crest.PollerWithPollFn(t.Context(), cfg, 0, func(_ []crest.Message) {}, func(_ context.Context, _ crest.IMAPConfig) ([]crest.Message, error) {
+			return nil, nil
+		})
+	}()
+	select {
+	case <-done:
+		// returned immediately as expected
+	case <-t.Context().Done():
+		t.Fatal("PollerWithPollFn did not return immediately for non-positive interval")
+	}
+}
+
 func TestPollerExitsOnContextCancel(t *testing.T) {
 	// Start poller with an already-cancelled context — it must return immediately.
 	ctx, cancel := context.WithCancel(t.Context())

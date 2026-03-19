@@ -73,11 +73,17 @@ func main() {
 	// --- Crest IMAP poller (optional — only started if configured) ---
 	imapHost := os.Getenv("CREST_IMAP_HOST")
 	if imapHost != "" {
+		imapUser := mustEnv("CREST_IMAP_USERNAME", "")
+		imapPass := mustEnv("CREST_IMAP_PASSWORD", "")
+		if imapUser == "" || imapPass == "" {
+			slog.Error("CREST_IMAP_HOST is set but CREST_IMAP_USERNAME or CREST_IMAP_PASSWORD is missing — Crest poller not started")
+			os.Exit(1)
+		}
 		imapCfg := crest.IMAPConfig{
 			Host:     imapHost,
 			Port:     1143,
-			Username: mustEnv("CREST_IMAP_USERNAME", ""),
-			Password: mustEnv("CREST_IMAP_PASSWORD", ""),
+			Username: imapUser,
+			Password: imapPass,
 			Mailbox:  "INBOX",
 		}
 		go crest.Poller(ctx, imapCfg, 300*time.Second, func(msgs []crest.Message) {

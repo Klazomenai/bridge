@@ -86,6 +86,7 @@ func (b *Bot) Start(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("open crypto store db: %w", err)
 	}
+	defer func() { _ = db.Close() }()
 
 	pickleKey := []byte(b.cfg.PickleKey)
 	helper, err := cryptohelper.NewCryptoHelper(b.client, pickleKey, db)
