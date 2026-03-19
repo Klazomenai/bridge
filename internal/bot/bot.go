@@ -1,6 +1,6 @@
 // Package bot implements the mautrix-go Matrix bot client.
 // Built with -tags goolm (pure-Go olm, no CGo) so the image can use distroless/static.
-// E2EE session state is persisted to /data/crypto-store (PVC-backed SQLite).
+// E2EE session state is persisted to /var/lib/bridge (PVC-backed SQLite).
 package bot
 
 import (
@@ -57,7 +57,7 @@ type Bot struct {
 // New creates a Bot but does not connect yet.
 func New(cfg Config, orch OrchestratorI) (*Bot, error) {
 	if cfg.CryptoDBPath == "" {
-		cfg.CryptoDBPath = "/data/crypto-store/bridge.db"
+		cfg.CryptoDBPath = "/var/lib/bridge/bridge.db"
 	}
 	if cfg.DisplayName == "" {
 		cfg.DisplayName = "Bridge"
