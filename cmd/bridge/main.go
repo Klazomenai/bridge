@@ -54,7 +54,7 @@ func main() {
 		Homeserver:   mustEnv("MATRIX_HOMESERVER", ""),
 		Username:     mustEnv("MATRIX_USERNAME", ""),
 		Password:     mustEnv("MATRIX_PASSWORD", ""),
-		CryptoDBPath: mustEnv("CRYPTO_DB_PATH", "/data/crypto-store/bridge.db"),
+		CryptoDBPath: mustEnv("CRYPTO_DB_PATH", "/var/lib/bridge/bridge.db"),
 		PickleKey:    mustEnv("PICKLE_KEY", ""),
 		DisplayName:  "Bridge",
 		KnownCrew:    registry.IDs(),
