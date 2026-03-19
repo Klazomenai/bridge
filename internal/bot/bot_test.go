@@ -174,17 +174,37 @@ func TestExtractCrewRequestOwnMessagesIgnored(t *testing.T) {
 	}
 }
 
+func TestExtractCrewRequestWordBoundary(t *testing.T) {
+	// "crest" must not match "crestfallen" — word boundary required after crew ID.
+	got := extractCrewRequest("over to crestfallen horizon", []string{"crest"})
+	if got != "" {
+		t.Errorf("expected no match for partial word, got %q", got)
+	}
+	// Exact match at end-of-string must still work.
+	got = extractCrewRequest("over to crest", []string{"crest"})
+	if got != "crest" {
+		t.Errorf("expected crest, got %q", got)
+	}
+	// Followed by punctuation/space is fine.
+	got = extractCrewRequest("over to crest, please check the inbox", []string{"crest"})
+	if got != "crest" {
+		t.Errorf("expected crest, got %q", got)
+	}
+}
+
 // --- handleMessage tests using mocks ---
 
 // mockOrch is a test double for OrchestratorI.
 type mockOrch struct {
-	resp *orchestrator.Response
-	err  error
-	calls []string // roomID:text
+	resp         *orchestrator.Response
+	err          error
+	calls        []string // roomID:text
+	crewRequests []string // requestedCrew arg per call
 }
 
-func (m *mockOrch) Handle(_ context.Context, roomID, userText, _ string) (*orchestrator.Response, error) {
+func (m *mockOrch) Handle(_ context.Context, roomID, userText, requestedCrew string) (*orchestrator.Response, error) {
 	m.calls = append(m.calls, roomID+":"+userText)
+	m.crewRequests = append(m.crewRequests, requestedCrew)
 	return m.resp, m.err
 }
 
@@ -211,7 +231,10 @@ func newTestBot(t *testing.T, orch OrchestratorI, sender Sender, selfUserID id.U
 		client: client,
 		orch:   orch,
 		sender: sender,
-		cfg:    Config{Username: string(selfUserID)},
+		cfg: Config{
+			Username:  string(selfUserID),
+			KnownCrew: []string{"maren", "crest"},
+		},
 	}
 }
 
@@ -314,6 +337,10 @@ func TestCrewRequestExtractedBeforeRouting(t *testing.T) {
 	bot.handleMessage(t.Context(), textEvent("@captain:server", "!room:server", "Crest, check the inbox"))
 
 	if len(orch.calls) != 1 {
-		t.Fatal("expected orchestrator called")
+		t.Fatal("expected orchestrator called once")
+	}
+	// Verify crew extraction: "Crest," prefix must result in requestedCrew="crest".
+	if orch.crewRequests[0] != "crest" {
+		t.Errorf("expected requestedCrew=%q, got %q", "crest", orch.crewRequests[0])
 	}
 }

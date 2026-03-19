@@ -29,17 +29,22 @@ func SendMail(cfg SMTPConfig, to, subject, body string) error {
 	addr := net.JoinHostPort(cfg.Host, fmt.Sprintf("%d", cfg.Port))
 	auth := smtp.PlainAuth("", cfg.Username, cfg.Password, cfg.Host)
 
+	// Sanitise all user-controlled values before use — both in message headers
+	// and in the SMTP envelope to prevent header/command injection.
+	cleanFrom := sanitiseHeader(cfg.From)
+	cleanTo := sanitiseHeader(to)
+
 	msg := []byte(
-		"From: " + sanitiseHeader(cfg.From) + "\r\n" +
-			"To: " + sanitiseHeader(to) + "\r\n" +
+		"From: " + cleanFrom + "\r\n" +
+			"To: " + cleanTo + "\r\n" +
 			"Subject: " + sanitiseHeader(subject) + "\r\n" +
 			"Content-Type: text/plain; charset=utf-8\r\n" +
 			"\r\n" +
 			body + "\r\n",
 	)
 
-	if err := smtp.SendMail(addr, auth, cfg.From, []string{to}, msg); err != nil {
-		return fmt.Errorf("smtp send to %s: %w", to, err)
+	if err := smtp.SendMail(addr, auth, cleanFrom, []string{cleanTo}, msg); err != nil {
+		return fmt.Errorf("smtp send to %s: %w", cleanTo, err)
 	}
 	return nil
 }

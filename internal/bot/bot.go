@@ -200,8 +200,16 @@ func extractCrewRequest(text string, knownCrew []string) string {
 	lower := strings.ToLower(text)
 
 	// "Over to <crew>" overrides prefix routing — check this first.
+	// Require a word boundary after the crew ID to avoid matching partial words
+	// (e.g. "crest" must not match "over to crestfallen").
 	for _, c := range knownCrew {
-		if strings.Contains(lower, "over to "+c) {
+		phrase := "over to " + c
+		idx := strings.Index(lower, phrase)
+		if idx == -1 {
+			continue
+		}
+		after := idx + len(phrase)
+		if after == len(lower) || !isWordChar(rune(lower[after])) {
 			return c
 		}
 	}
@@ -214,4 +222,9 @@ func extractCrewRequest(text string, knownCrew []string) string {
 	}
 
 	return ""
+}
+
+// isWordChar reports whether r is a letter or digit (ASCII).
+func isWordChar(r rune) bool {
+	return (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9')
 }
