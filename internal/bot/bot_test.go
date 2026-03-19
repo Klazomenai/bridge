@@ -79,8 +79,8 @@ func TestNewDefaultsCryptoDBPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	if b.cfg.CryptoDBPath == "" {
-		t.Error("expected non-empty default CryptoDBPath")
+	if b.cfg.CryptoDBPath != DefaultCryptoDBPath {
+		t.Errorf("expected default CryptoDBPath %q, got %q", DefaultCryptoDBPath, b.cfg.CryptoDBPath)
 	}
 }
 

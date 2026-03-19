@@ -13,14 +13,21 @@ RUN CGO_ENABLED=0 go build -tags goolm -trimpath \
     -ldflags="-s -w" \
     -o /out/bridge ./cmd/bridge
 
+# Create empty mount point directories. distroless/static is built from scratch
+# and contains neither /var (e.g. /var/lib/bridge) nor /run; kubelet mounts
+# volumes over these paths at runtime. Without them in the image the behaviour
+# is runtime-implementation-specific — creating them here makes the contract
+# explicit and portable.
+RUN install -d -m 0700 /staging/var/lib/bridge && \
+    mkdir -p /staging/run/secrets/anthropic
+
 FROM gcr.io/distroless/static:nonroot
 
-# Crew registry config is mounted or baked in at runtime.
 COPY --from=builder /out/bridge /bridge
+COPY --chown=65532:65532 --from=builder /staging/var/lib/bridge /var/lib/bridge
+COPY --from=builder /staging/run/secrets/anthropic /run/secrets/anthropic
 COPY config/crew.yaml /config/crew.yaml
 
-# The crypto store PVC is mounted at /data/crypto-store at runtime.
-# The Anthropic API key is mounted at /run/secrets/anthropic/api_key at runtime.
 USER nonroot
 
 ENTRYPOINT ["/bridge"]
