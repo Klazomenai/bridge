@@ -128,7 +128,7 @@ func TestExecuteUnknownToolReturnsError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for unknown tool")
 	}
-	if err.Error() != "unknown tool: nonexistent" {
+	if err.Error() != `unknown tool: "nonexistent"` {
 		t.Errorf("unexpected error message: %v", err)
 	}
 }

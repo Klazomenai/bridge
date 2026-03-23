@@ -70,7 +70,7 @@ func (r *Registry) Has(name string) bool {
 func (r *Registry) Execute(ctx context.Context, name string, input json.RawMessage) (string, error) {
 	tool := r.Get(name)
 	if tool == nil {
-		return "", fmt.Errorf("unknown tool: %s", name)
+		return "", fmt.Errorf("unknown tool: %q", name)
 	}
 	return tool.Execute(ctx, input)
 }

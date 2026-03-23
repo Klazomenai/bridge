@@ -3,6 +3,7 @@ package crew
 import (
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -169,5 +170,6 @@ func (r *Registry) ValidateTools(checker ToolChecker) error {
 	if len(missing) == 0 {
 		return nil
 	}
+	sort.Strings(missing)
 	return fmt.Errorf("tool validation failed:\n  %s", strings.Join(missing, "\n  "))
 }
