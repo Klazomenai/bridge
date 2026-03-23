@@ -66,3 +66,15 @@ func buildResponse(c crew.Crew, text string) *Response {
 		Verbosity:  c.Verbosity(),
 	}
 }
+
+// frameMessage caps and prefixes the user input to limit prompt injection surface.
+func frameMessage(userText string) string {
+	// Fast path: byte length <= cap means rune count must also be <= cap (UTF-8 invariant).
+	// Only pay for rune conversion on the uncommon long-message path.
+	if len(userText) > maxUserMessageLen {
+		if runes := []rune(userText); len(runes) > maxUserMessageLen {
+			userText = string(runes[:maxUserMessageLen])
+		}
+	}
+	return captainPrefix + userText
+}
