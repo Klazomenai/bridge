@@ -41,9 +41,9 @@ func NewRegistry() *Registry {
 // Register adds a tool to the registry. Panics if a tool with the same name
 // is already registered (programming error, not runtime).
 func (r *Registry) Register(tool ToolDefinition) {
+	name := tool.Name()
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	name := tool.Name()
 	if _, exists := r.tools[name]; exists {
 		panic(fmt.Sprintf("tools: duplicate registration for %q", name))
 	}
@@ -65,18 +65,32 @@ func (r *Registry) Has(name string) bool {
 	return ok
 }
 
+// Execute looks up a tool by name and runs it. Returns an error if the tool
+// is not registered.
+func (r *Registry) Execute(ctx context.Context, name string, input json.RawMessage) (string, error) {
+	tool := r.Get(name)
+	if tool == nil {
+		return "", fmt.Errorf("unknown tool: %s", name)
+	}
+	return tool.Execute(ctx, input)
+}
+
 // ForCrew returns the Anthropic ToolUnionParam slice for a crew member's
 // declared tools. Unknown tool names are silently skipped (validation should
 // catch these at startup via crew.Registry.ValidateTools).
 func (r *Registry) ForCrew(toolNames []string) []anthropic.ToolUnionParam {
+	// Copy tool references under lock, then build params without holding it.
 	r.mu.RLock()
-	defer r.mu.RUnlock()
-	var params []anthropic.ToolUnionParam
+	matched := make([]ToolDefinition, 0, len(toolNames))
 	for _, name := range toolNames {
-		tool, ok := r.tools[name]
-		if !ok {
-			continue
+		if tool, ok := r.tools[name]; ok {
+			matched = append(matched, tool)
 		}
+	}
+	r.mu.RUnlock()
+
+	params := make([]anthropic.ToolUnionParam, 0, len(matched))
+	for _, tool := range matched {
 		params = append(params, anthropic.ToolUnionParam{
 			OfTool: &anthropic.ToolParam{
 				Name:        tool.Name(),

@@ -108,6 +108,31 @@ func TestForCrewEmptyTools(t *testing.T) {
 	}
 }
 
+func TestExecuteKnownTool(t *testing.T) {
+	reg := tools.NewRegistry()
+	reg.Register(&stubTool{name: "alpha"})
+
+	result, err := reg.Execute(t.Context(), "alpha", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result != "ok" {
+		t.Errorf("expected 'ok', got %q", result)
+	}
+}
+
+func TestExecuteUnknownToolReturnsError(t *testing.T) {
+	reg := tools.NewRegistry()
+
+	_, err := reg.Execute(t.Context(), "nonexistent", nil)
+	if err == nil {
+		t.Fatal("expected error for unknown tool")
+	}
+	if err.Error() != "unknown tool: nonexistent" {
+		t.Errorf("unexpected error message: %v", err)
+	}
+}
+
 func TestNames(t *testing.T) {
 	reg := tools.NewRegistry()
 	reg.Register(&stubTool{name: "alpha"})

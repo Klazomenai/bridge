@@ -12,11 +12,12 @@ import (
 	"syscall"
 	"time"
 
-	ctxbuf "klazomenai/bridge/internal/context"
 	"klazomenai/bridge/internal/bot"
-	"klazomenai/bridge/internal/crew"
+	ctxbuf "klazomenai/bridge/internal/context"
 	"klazomenai/bridge/internal/crest"
+	"klazomenai/bridge/internal/crew"
 	"klazomenai/bridge/internal/orchestrator"
+	"klazomenai/bridge/internal/tools"
 )
 
 func main() {
@@ -35,11 +36,21 @@ func main() {
 		os.Exit(1)
 	}
 
+	// --- Tool registry ---
+	toolReg := tools.NewRegistry()
+	// Tools will be registered here as they are implemented (e.g. crest email tools, maren cluster tools).
+
 	// --- Crew registry ---
 	registryPath := mustEnv("CREW_REGISTRY_PATH", "/config/crew.yaml")
 	registry, err := crew.Load(registryPath)
 	if err != nil {
 		slog.Error("failed to load crew registry", "err", err)
+		os.Exit(1)
+	}
+
+	// --- Validate crew tool declarations against registered tools ---
+	if err := registry.ValidateTools(toolReg); err != nil {
+		slog.Error("crew tool validation failed", "err", err)
 		os.Exit(1)
 	}
 

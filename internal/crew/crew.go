@@ -34,4 +34,11 @@ func (c *BaseCrew) Verbosity() string    { return c.verbosity }
 func (c *BaseCrew) SystemPrompt() string { return c.systemPrompt }
 func (c *BaseCrew) AnnouncesAs() string  { return c.announcesAs }
 func (c *BaseCrew) VoiceModel() string   { return c.voiceModel }
-func (c *BaseCrew) Tools() []string      { return c.tools }
+func (c *BaseCrew) Tools() []string {
+	if len(c.tools) == 0 {
+		return nil
+	}
+	out := make([]string, len(c.tools))
+	copy(out, c.tools)
+	return out
+}
