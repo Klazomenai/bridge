@@ -19,12 +19,10 @@ type loopResult struct {
 	turns []anthropic.MessageParam
 }
 
-// runToolLoop calls the Claude API and, if the response contains tool_use blocks,
-// executes the requested tools and continues until Claude produces a text response
-// or the iteration limit is reached.
+// runToolLoop makes a single Claude API call and returns the assistant text.
 //
-// For now (pre-#32), this is a pass-through: no tools are registered, so Claude
-// never returns tool_use. The loop structure is here for #32 to fill in.
+// This is a stub: no tool-use handling or iterative looping is implemented yet.
+// Full tool_use support will be added in #32.
 func (o *Orchestrator) runToolLoop(ctx context.Context, c crew.Crew, messages []anthropic.MessageParam) (*loopResult, error) {
 	resp, err := o.client.New(ctx, anthropic.MessageNewParams{
 		Model:     anthropic.Model(c.Model()),
