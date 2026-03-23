@@ -10,13 +10,6 @@ import (
 	"klazomenai/bridge/internal/crew"
 )
 
-const (
-	// maxToolIterations caps the number of tool-use round-trips per message.
-	maxToolIterations = 5
-	// maxToolOutputLen caps individual tool output to prevent context bloat.
-	maxToolOutputLen = 4096
-)
-
 // loopResult holds the output of a tool-use loop.
 type loopResult struct {
 	// text is the final assistant text after all tool-use rounds complete.
