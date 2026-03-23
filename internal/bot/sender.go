@@ -1,0 +1,36 @@
+package bot
+
+import (
+	"context"
+
+	"maunium.net/go/mautrix"
+	"maunium.net/go/mautrix/event"
+	"maunium.net/go/mautrix/id"
+
+	"klazomenai/bridge/internal/orchestrator"
+)
+
+// Sender abstracts the Matrix message-sending operation.
+type Sender interface {
+	Send(ctx context.Context, roomID id.RoomID, resp *orchestrator.Response) error
+}
+
+// matrixSender is the production Sender backed by a real mautrix client.
+type matrixSender struct {
+	client *mautrix.Client
+}
+
+func (s *matrixSender) Send(ctx context.Context, roomID id.RoomID, resp *orchestrator.Response) error {
+	_, err := s.client.SendMessageEvent(ctx, roomID, event.EventMessage, struct {
+		MsgType    event.MessageType `json:"msgtype"`
+		Body       string            `json:"body"`
+		CrewMember string            `json:"crew_member"`
+		Verbosity  string            `json:"verbosity"`
+	}{
+		MsgType:    event.MsgText,
+		Body:       resp.Text,
+		CrewMember: resp.CrewID,
+		Verbosity:  resp.Verbosity,
+	})
+	return err
+}
