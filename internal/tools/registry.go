@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"sync"
 
 	anthropic "github.com/anthropics/anthropic-sdk-go"
@@ -108,7 +109,7 @@ func (r *Registry) ForCrew(toolNames []string) []anthropic.ToolUnionParam {
 	return params
 }
 
-// Names returns all registered tool names.
+// Names returns all registered tool names in sorted order.
 func (r *Registry) Names() []string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -116,5 +117,6 @@ func (r *Registry) Names() []string {
 	for name := range r.tools {
 		names = append(names, name)
 	}
+	sort.Strings(names)
 	return names
 }
