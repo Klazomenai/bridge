@@ -30,6 +30,7 @@ type crewEntryYAML struct {
 	Verbosity    string    `yaml:"verbosity"`
 	Voice        voiceYAML `yaml:"voice"`
 	SystemPrompt string    `yaml:"system_prompt"`
+	Tools        []string  `yaml:"tools"`
 }
 
 type voiceYAML struct {
@@ -88,6 +89,7 @@ func Load(path string) (*Registry, error) {
 			systemPrompt: prompt,
 			announcesAs:  entry.Voice.AnnouncesAs,
 			voiceModel:   entry.Voice.Model,
+			tools:        entry.Tools,
 		}
 	}
 
@@ -145,4 +147,27 @@ func (r *Registry) IDs() []string {
 		ids = append(ids, id)
 	}
 	return ids
+}
+
+// ToolChecker is the interface used by ValidateTools to check tool existence
+// without importing the tools package (avoids circular dependency).
+type ToolChecker interface {
+	Has(name string) bool
+}
+
+// ValidateTools checks that every tool declared in crew.yaml exists in the
+// tool registry. Returns an error listing all missing tools.
+func (r *Registry) ValidateTools(checker ToolChecker) error {
+	var missing []string
+	for id, c := range r.crew {
+		for _, tool := range c.Tools() {
+			if !checker.Has(tool) {
+				missing = append(missing, fmt.Sprintf("crew %s: unknown tool %q", id, tool))
+			}
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	return fmt.Errorf("tool validation failed:\n  %s", strings.Join(missing, "\n  "))
 }

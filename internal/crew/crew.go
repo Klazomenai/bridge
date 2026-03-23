@@ -10,6 +10,7 @@ type Crew interface {
 	SystemPrompt() string
 	AnnouncesAs() string
 	VoiceModel() string
+	Tools() []string
 }
 
 // BaseCrew holds the parsed crew member configuration.
@@ -22,6 +23,7 @@ type BaseCrew struct {
 	systemPrompt string
 	announcesAs  string
 	voiceModel   string
+	tools        []string
 }
 
 func (c *BaseCrew) ID() string           { return c.id }
@@ -32,3 +34,4 @@ func (c *BaseCrew) Verbosity() string    { return c.verbosity }
 func (c *BaseCrew) SystemPrompt() string { return c.systemPrompt }
 func (c *BaseCrew) AnnouncesAs() string  { return c.announcesAs }
 func (c *BaseCrew) VoiceModel() string   { return c.voiceModel }
+func (c *BaseCrew) Tools() []string      { return c.tools }
