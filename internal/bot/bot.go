@@ -10,7 +10,6 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"go.mau.fi/util/dbutil"
 	_ "modernc.org/sqlite" // pure-Go SQLite driver, no CGo required
@@ -18,7 +17,6 @@ import (
 	"maunium.net/go/mautrix"
 	"maunium.net/go/mautrix/crypto/cryptohelper"
 	"maunium.net/go/mautrix/event"
-	"maunium.net/go/mautrix/id"
 
 	"klazomenai/bridge/internal/orchestrator"
 )
@@ -27,11 +25,6 @@ import (
 // Keeping it as an interface allows injection of test doubles.
 type OrchestratorI interface {
 	Handle(ctx context.Context, roomID, userText, requestedCrew string) (*orchestrator.Response, error)
-}
-
-// Sender abstracts the Matrix message-sending operation.
-type Sender interface {
-	Send(ctx context.Context, roomID id.RoomID, resp *orchestrator.Response) error
 }
 
 // DefaultCryptoDBPath is the default path for the E2EE crypto store SQLite DB.
@@ -141,95 +134,4 @@ func (b *Bot) registerHandlers() {
 	syncer.OnEventType(event.EventMessage, func(ctx context.Context, evt *event.Event) {
 		b.handleMessage(ctx, evt)
 	})
-}
-
-// handleMessage processes a decrypted incoming message event.
-func (b *Bot) handleMessage(ctx context.Context, evt *event.Event) {
-	// Ignore own messages.
-	if evt.Sender == b.client.UserID {
-		return
-	}
-
-	content := evt.Content.AsMessage()
-	if content == nil || content.MsgType != event.MsgText {
-		return
-	}
-
-	text := strings.TrimSpace(content.Body)
-	if text == "" {
-		return
-	}
-
-	requestedCrew := extractCrewRequest(text, b.cfg.KnownCrew)
-
-	slog.Info("bot: message received",
-		"room", evt.RoomID, "sender", evt.Sender,
-		"crew_request", requestedCrew)
-
-	resp, err := b.orch.Handle(ctx, string(evt.RoomID), text, requestedCrew)
-	if err != nil {
-		slog.Error("bot: orchestrator error", "err", err)
-		return
-	}
-
-	if err := b.sender.Send(ctx, evt.RoomID, resp); err != nil {
-		slog.Error("bot: send failed", "room", evt.RoomID, "err", err)
-	}
-}
-
-// matrixSender is the production Sender backed by a real mautrix client.
-type matrixSender struct {
-	client *mautrix.Client
-}
-
-func (s *matrixSender) Send(ctx context.Context, roomID id.RoomID, resp *orchestrator.Response) error {
-	_, err := s.client.SendMessageEvent(ctx, roomID, event.EventMessage, struct {
-		MsgType    event.MessageType `json:"msgtype"`
-		Body       string            `json:"body"`
-		CrewMember string            `json:"crew_member"`
-		Verbosity  string            `json:"verbosity"`
-	}{
-		MsgType:    event.MsgText,
-		Body:       resp.Text,
-		CrewMember: resp.CrewID,
-		Verbosity:  resp.Verbosity,
-	})
-	return err
-}
-
-// extractCrewRequest returns the lowercase crew ID if the message routes to a
-// specific crew member, or "" to use the default.
-// "over to <crew>" anywhere in the message takes precedence over a prefix match.
-// knownCrew must be lowercase crew IDs from the loaded registry.
-func extractCrewRequest(text string, knownCrew []string) string {
-	lower := strings.ToLower(text)
-
-	// "Over to <crew>" overrides prefix routing — check this first.
-	// Require a word boundary after the crew ID to avoid matching partial words
-	// (e.g. "crest" must not match "over to crestfallen").
-	for _, c := range knownCrew {
-		phrase := "over to " + c
-		idx := strings.Index(lower, phrase)
-		if idx == -1 {
-			continue
-		}
-		after := idx + len(phrase)
-		if after == len(lower) || !isWordChar(rune(lower[after])) {
-			return c
-		}
-	}
-
-	// Prefix routing: "<crew>," or "<crew>:".
-	for _, c := range knownCrew {
-		if strings.HasPrefix(lower, c+",") || strings.HasPrefix(lower, c+":") {
-			return c
-		}
-	}
-
-	return ""
-}
-
-// isWordChar reports whether r is a letter or digit (ASCII).
-func isWordChar(r rune) bool {
-	return (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9')
 }

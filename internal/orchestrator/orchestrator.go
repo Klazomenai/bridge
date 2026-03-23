@@ -4,9 +4,7 @@ package orchestrator
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
-	"strings"
 
 	anthropic "github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
@@ -81,15 +79,7 @@ func (o *Orchestrator) Route(requestedCrew string) crew.Crew {
 func (o *Orchestrator) Handle(ctx context.Context, roomID, userText, requestedCrew string) (*Response, error) {
 	c := o.Route(requestedCrew)
 
-	// Cap and frame the user message to limit prompt injection surface.
-	// Fast path: byte length <= cap means rune count must also be <= cap (UTF-8 invariant).
-	// Only pay for rune conversion on the uncommon long-message path.
-	if len(userText) > maxUserMessageLen {
-		if runes := []rune(userText); len(runes) > maxUserMessageLen {
-			userText = string(runes[:maxUserMessageLen])
-		}
-	}
-	framed := captainPrefix + userText
+	framed := frameMessage(userText)
 
 	buf := o.context.Buffer(roomID)
 	history := buf.Messages()
@@ -101,37 +91,29 @@ func (o *Orchestrator) Handle(ctx context.Context, roomID, userText, requestedCr
 		"crew", c.Name(), "room", roomID,
 		"history_turns", len(history)/2, "model", c.Model())
 
-	resp, err := o.client.New(ctx, anthropic.MessageNewParams{
-		Model:     anthropic.Model(c.Model()),
-		MaxTokens: maxTokens,
-		System: []anthropic.TextBlockParam{
-			{Text: c.SystemPrompt()},
-		},
-		Messages: messages,
-	})
+	result, err := o.runToolLoop(ctx, c, messages)
 	if err != nil {
-		return nil, fmt.Errorf("anthropic api: %w", err)
+		return nil, err
 	}
 
-	var sb strings.Builder
-	for _, block := range resp.Content {
-		if block.Type == "text" {
-			sb.WriteString(block.Text)
+	// Store all turns in the context buffer.
+	buf.Add(userMsg)
+	for _, turn := range result.turns {
+		buf.Add(turn)
+	}
+	buf.Add(anthropic.NewAssistantMessage(anthropic.NewTextBlock(result.text)))
+
+	return buildResponse(c, result.text), nil
+}
+
+// frameMessage caps and prefixes the user input to limit prompt injection surface.
+func frameMessage(userText string) string {
+	// Fast path: byte length <= cap means rune count must also be <= cap (UTF-8 invariant).
+	// Only pay for rune conversion on the uncommon long-message path.
+	if len(userText) > maxUserMessageLen {
+		if runes := []rune(userText); len(runes) > maxUserMessageLen {
+			userText = string(runes[:maxUserMessageLen])
 		}
 	}
-	text := strings.TrimSpace(sb.String())
-	if text == "" {
-		return nil, fmt.Errorf("anthropic returned no text content (got %d block(s), types may be tool-use only)", len(resp.Content))
-	}
-
-	// Add both turns to the context buffer.
-	buf.Add(userMsg)
-	buf.Add(anthropic.NewAssistantMessage(anthropic.NewTextBlock(text)))
-
-	return &Response{
-		Text:       text,
-		CrewID:     c.ID(),
-		CrewMember: c.Name(),
-		Verbosity:  c.Verbosity(),
-	}, nil
+	return captainPrefix + userText
 }
