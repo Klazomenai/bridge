@@ -41,7 +41,13 @@ func NewRegistry() *Registry {
 // Register adds a tool to the registry. Panics if a tool with the same name
 // is already registered (programming error, not runtime).
 func (r *Registry) Register(tool ToolDefinition) {
+	if tool == nil {
+		panic("tools: cannot register nil tool")
+	}
 	name := tool.Name()
+	if name == "" {
+		panic("tools: cannot register tool with empty name")
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if _, exists := r.tools[name]; exists {

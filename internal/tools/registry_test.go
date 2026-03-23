@@ -52,6 +52,26 @@ func TestHas(t *testing.T) {
 	}
 }
 
+func TestRegisterNilToolPanics(t *testing.T) {
+	reg := tools.NewRegistry()
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic on nil tool registration")
+		}
+	}()
+	reg.Register(nil)
+}
+
+func TestRegisterEmptyNamePanics(t *testing.T) {
+	reg := tools.NewRegistry()
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic on empty name registration")
+		}
+	}()
+	reg.Register(&stubTool{name: ""})
+}
+
 func TestDuplicateRegistrationPanics(t *testing.T) {
 	reg := tools.NewRegistry()
 	reg.Register(&stubTool{name: "alpha"})
