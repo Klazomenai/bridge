@@ -39,10 +39,11 @@ type ClaudeClient interface {
 
 // Orchestrator routes messages to crew members and calls the Anthropic API.
 type Orchestrator struct {
-	registry *crew.Registry
-	context  *ctxbuf.Manager
-	client   ClaudeClient
-	tools    *tools.Registry
+	registry   *crew.Registry
+	context    *ctxbuf.Manager
+	client     ClaudeClient
+	tools      *tools.Registry
+	sandboxCfg tools.SandboxConfig
 }
 
 // New creates an Orchestrator with the real Anthropic client.
@@ -53,10 +54,11 @@ func New(registry *crew.Registry, ctxManager *ctxbuf.Manager, toolReg *tools.Reg
 	}
 	c := anthropic.NewClient(option.WithAPIKey(apiKey))
 	return &Orchestrator{
-		registry: registry,
-		context:  ctxManager,
-		client:   &c.Messages,
-		tools:    toolReg,
+		registry:   registry,
+		context:    ctxManager,
+		client:     &c.Messages,
+		tools:      toolReg,
+		sandboxCfg: tools.DefaultSandboxConfig(),
 	}
 }
 
@@ -65,7 +67,13 @@ func NewWithClient(registry *crew.Registry, ctxManager *ctxbuf.Manager, toolReg 
 	if toolReg == nil {
 		panic("orchestrator: toolReg must not be nil")
 	}
-	return &Orchestrator{registry: registry, context: ctxManager, tools: toolReg, client: client}
+	return &Orchestrator{
+		registry:   registry,
+		context:    ctxManager,
+		tools:      toolReg,
+		client:     client,
+		sandboxCfg: tools.DefaultSandboxConfig(),
+	}
 }
 
 // Route selects the crew member for this message.
@@ -100,7 +108,7 @@ func (o *Orchestrator) Handle(ctx context.Context, roomID, userText, requestedCr
 		"crew", c.Name(), "room", roomID,
 		"history_turns", len(history)/2, "model", c.Model())
 
-	result, err := o.runToolLoop(ctx, c, messages)
+	result, err := o.runToolLoop(ctx, c, roomID, messages)
 	if err != nil {
 		return nil, err
 	}

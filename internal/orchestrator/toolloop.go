@@ -2,25 +2,19 @@ package orchestrator
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"strings"
-	"time"
 
 	anthropic "github.com/anthropics/anthropic-sdk-go"
 
 	"klazomenai/bridge/internal/crew"
+	"klazomenai/bridge/internal/tools"
 )
 
 const (
 	// maxToolIterations caps the number of tool-use round-trips per message.
 	maxToolIterations = 5
-	// maxToolOutputLen caps individual tool output by rune count to prevent
-	// context bloat while remaining UTF-8 safe.
-	maxToolOutputLen = 4096
-	// toolExecTimeout is the per-tool execution timeout.
-	toolExecTimeout = 30 * time.Second
 )
 
 // loopResult holds the output of a tool-use loop.
@@ -36,7 +30,7 @@ type loopResult struct {
 // with tool_use blocks, the bridge executes the requested tools and feeds
 // results back. This continues until Claude produces a text response or the
 // iteration limit is reached.
-func (o *Orchestrator) runToolLoop(ctx context.Context, c crew.Crew, messages []anthropic.MessageParam) (*loopResult, error) {
+func (o *Orchestrator) runToolLoop(ctx context.Context, c crew.Crew, roomID string, messages []anthropic.MessageParam) (*loopResult, error) {
 	crewTools := o.tools.ForCrew(c.Tools())
 
 	var turns []anthropic.MessageParam
@@ -67,7 +61,7 @@ func (o *Orchestrator) runToolLoop(ctx context.Context, c crew.Crew, messages []
 
 		// Claude wants to use tools — execute each one and collect results.
 		allowedTools := c.Tools()
-		toolResults := o.executeToolCalls(ctx, resp.Content, allowedTools)
+		toolResults := o.executeToolCalls(ctx, resp.Content, allowedTools, c.ID(), roomID)
 
 		// Build the assistant message preserving text and tool_use blocks.
 		assistantBlocks := make([]anthropic.ContentBlockParamUnion, 0, len(resp.Content))
@@ -98,7 +92,7 @@ func (o *Orchestrator) runToolLoop(ctx context.Context, c crew.Crew, messages []
 
 // executeToolCalls runs each tool_use block and returns tool_result blocks.
 // allowedTools is the crew member's declared tool allowlist for defense in depth.
-func (o *Orchestrator) executeToolCalls(ctx context.Context, content []anthropic.ContentBlockUnion, allowedTools []string) []anthropic.ContentBlockParamUnion {
+func (o *Orchestrator) executeToolCalls(ctx context.Context, content []anthropic.ContentBlockUnion, allowedTools []string, crewID, roomID string) []anthropic.ContentBlockParamUnion {
 	allowed := make(map[string]bool, len(allowedTools))
 	for _, t := range allowedTools {
 		allowed[t] = true
@@ -119,43 +113,19 @@ func (o *Orchestrator) executeToolCalls(ctx context.Context, content []anthropic
 			continue
 		}
 
-		result, isError := o.executeSingleTool(ctx, block.Name, block.Input)
+		tool := o.tools.Get(block.Name)
+		if tool == nil {
+			results = append(results, anthropic.NewToolResultBlock(
+				block.ID, fmt.Sprintf("unknown tool: %q", block.Name), true))
+			continue
+		}
+
+		meta := tools.SandboxMeta{CrewID: crewID, RoomID: roomID, ToolName: block.Name}
+		result, isError := tools.ExecuteWithSandbox(ctx, tool, block.Input, o.sandboxCfg, meta)
 		results = append(results, anthropic.NewToolResultBlock(block.ID, result, isError))
 	}
 
 	return results
-}
-
-// executeSingleTool runs one tool with timeout and output capping.
-func (o *Orchestrator) executeSingleTool(ctx context.Context, name string, input json.RawMessage) (result string, isError bool) {
-	start := time.Now()
-
-	toolCtx, cancel := context.WithTimeout(ctx, toolExecTimeout)
-	defer cancel()
-
-	output, err := o.tools.Execute(toolCtx, name, input)
-	elapsed := time.Since(start)
-
-	if err != nil {
-		slog.Warn("orchestrator: tool execution failed",
-			"tool", name, "duration_ms", elapsed.Milliseconds(), "err", err)
-		return fmt.Sprintf("tool error: %s", err.Error()), true
-	}
-
-	// Fast path: byte length <= cap means rune count must also be <= cap
-	// (UTF-8 invariant). Only pay for rune conversion on the uncommon
-	// long-output path.
-	if len(output) > maxToolOutputLen {
-		if runes := []rune(output); len(runes) > maxToolOutputLen {
-			output = string(runes[:maxToolOutputLen]) + "\n[truncated]"
-		}
-	}
-
-	slog.Info("orchestrator: tool executed",
-		"tool", name, "duration_ms", elapsed.Milliseconds(),
-		"output_len", len(output))
-
-	return output, false
 }
 
 // extractText concatenates all text blocks from a Claude response.
