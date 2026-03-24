@@ -73,13 +73,12 @@ func (t *IMAPPollTool) Execute(ctx context.Context, input json.RawMessage) (stri
 		return "[]", nil
 	}
 
-	// Cap message count to avoid producing JSON that exceeds the orchestrator's
-	// tool output limit (4096 runes) and gets truncated mid-stream.
-	const maxMessages = 20
-	truncated := false
-	if len(msgs) > maxMessages {
+	// Cap message count to keep output well within the orchestrator's 4096-rune
+	// tool output limit. 10 messages × ~250 chars each ≈ 2500 chars with headroom.
+	const maxMessages = 10
+	total := len(msgs)
+	if total > maxMessages {
 		msgs = msgs[:maxMessages]
-		truncated = true
 	}
 
 	results := make([]imapPollMessage, len(msgs))
@@ -95,12 +94,22 @@ func (t *IMAPPollTool) Execute(ctx context.Context, input json.RawMessage) (stri
 		}
 	}
 
+	if total > maxMessages {
+		wrapper := struct {
+			Messages []imapPollMessage `json:"messages"`
+			Total    int               `json:"total"`
+			Showing  int               `json:"showing"`
+		}{Messages: results, Total: total, Showing: len(results)}
+		out, err := json.Marshal(wrapper)
+		if err != nil {
+			return "", fmt.Errorf("marshal results: %w", err)
+		}
+		return string(out), nil
+	}
+
 	out, err := json.Marshal(results)
 	if err != nil {
 		return "", fmt.Errorf("marshal results: %w", err)
-	}
-	if truncated {
-		return string(out) + "\n(showing first 20 messages; more unseen messages exist)", nil
 	}
 	return string(out), nil
 }
