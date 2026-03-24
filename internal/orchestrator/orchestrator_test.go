@@ -475,15 +475,42 @@ crew:
 }
 
 func TestToolUseUnknownToolReturnsError(t *testing.T) {
+	// Crew declares ghost_tool in allowlist, but it's not registered in the
+	// tool registry. This bypasses the allowlist check and hits the
+	// Registry.Execute "unknown tool" path.
 	toolReg := newToolRegistry() // No tools registered.
 
-	// Claude asks for a tool that doesn't exist.
-	o, mock := newTestOrchestrator(t, toolReg,
-		toolUseResponse("tu_1", "nonexistent", json.RawMessage(`{}`)),
-		textResponse("That tool doesn't exist."),
-	)
+	crewYAML := `
+default_crew: maren
+crew:
+  maren:
+    name: "Maren"
+    role: "Shipwright"
+    model: "claude-sonnet-4-6"
+    verbosity: dispatch
+    tools: [ghost_tool]
+    voice:
+      model: "en_GB-cori-high.onnx"
+      announces_as: "Maren:"
+    system_prompt: "You are Maren. Respond in {verbosity}"
+`
+	f := filepath.Join(t.TempDir(), "crew.yaml")
+	if err := os.WriteFile(f, []byte(crewYAML), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	reg, err := crew.Load(f)
+	if err != nil {
+		t.Fatal(err)
+	}
 
-	resp, err := o.Handle(t.Context(), "!room:server", "test", "crest")
+	mgr := ctxbuf.NewManager(ctxbuf.DefaultMaxTurns)
+	mock := &mockClaudeClient{responses: []*anthropic.Message{
+		toolUseResponse("tu_1", "ghost_tool", json.RawMessage(`{}`)),
+		textResponse("That tool doesn't exist."),
+	}}
+	o := orchestrator.NewWithClient(reg, mgr, toolReg, mock)
+
+	resp, err := o.Handle(t.Context(), "!room:server", "test", "maren")
 	if err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
@@ -491,15 +518,16 @@ func TestToolUseUnknownToolReturnsError(t *testing.T) {
 		t.Errorf("unexpected text: %q", resp.Text)
 	}
 
-	// Verify isError=true was sent back.
+	// Verify isError=true with "unknown tool" message from Registry.Execute.
 	secondCall := mock.calls[1]
 	lastMsg := secondCall.Messages[len(secondCall.Messages)-1]
 	toolResult := lastMsg.Content[0].OfToolResult
 	if toolResult.IsError.Value != true {
 		t.Error("expected isError=true for unknown tool")
 	}
-	if len(mock.calls) != 2 {
-		t.Fatalf("expected 2 calls, got %d", len(mock.calls))
+	resultText := toolResult.Content[0].OfText.Text
+	if !strings.Contains(resultText, "unknown tool") {
+		t.Errorf("expected 'unknown tool' in result, got: %q", resultText)
 	}
 }
 
