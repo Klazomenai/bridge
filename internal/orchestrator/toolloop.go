@@ -16,7 +16,8 @@ import (
 const (
 	// maxToolIterations caps the number of tool-use round-trips per message.
 	maxToolIterations = 5
-	// maxToolOutputLen caps individual tool output to prevent context bloat.
+	// maxToolOutputLen caps individual tool output by rune count to prevent
+	// context bloat while remaining UTF-8 safe.
 	maxToolOutputLen = 4096
 	// toolExecTimeout is the per-tool execution timeout.
 	toolExecTimeout = 30 * time.Second
@@ -68,7 +69,7 @@ func (o *Orchestrator) runToolLoop(ctx context.Context, c crew.Crew, messages []
 		allowedTools := c.Tools()
 		toolResults := o.executeToolCalls(ctx, resp.Content, allowedTools)
 
-		// Build the assistant message (preserving all content blocks including tool_use).
+		// Build the assistant message preserving text and tool_use blocks.
 		assistantBlocks := make([]anthropic.ContentBlockParamUnion, 0, len(resp.Content))
 		for _, block := range resp.Content {
 			switch block.Type {
@@ -76,6 +77,9 @@ func (o *Orchestrator) runToolLoop(ctx context.Context, c crew.Crew, messages []
 				assistantBlocks = append(assistantBlocks, anthropic.NewTextBlock(block.Text))
 			case "tool_use":
 				assistantBlocks = append(assistantBlocks, anthropic.NewToolUseBlock(block.ID, block.Input, block.Name))
+			default:
+				slog.Debug("orchestrator: skipping unknown content block type",
+					"type", block.Type)
 			}
 		}
 		assistantMsg := anthropic.NewAssistantMessage(assistantBlocks...)
@@ -138,10 +142,13 @@ func (o *Orchestrator) executeSingleTool(ctx context.Context, name string, input
 		return fmt.Sprintf("tool error: %s", err.Error()), true
 	}
 
-	// Cap output by rune count to prevent context bloat without splitting
-	// UTF-8 codepoints.
-	if runes := []rune(output); len(runes) > maxToolOutputLen {
-		output = string(runes[:maxToolOutputLen]) + "\n[truncated]"
+	// Fast path: byte length <= cap means rune count must also be <= cap
+	// (UTF-8 invariant). Only pay for rune conversion on the uncommon
+	// long-output path.
+	if len(output) > maxToolOutputLen {
+		if runes := []rune(output); len(runes) > maxToolOutputLen {
+			output = string(runes[:maxToolOutputLen]) + "\n[truncated]"
+		}
 	}
 
 	slog.Info("orchestrator: tool executed",
