@@ -76,8 +76,8 @@ func (t *IMAPPollTool) Execute(ctx context.Context, input json.RawMessage) (stri
 	results := make([]imapPollMessage, len(msgs))
 	for i, m := range msgs {
 		body := m.Body
-		if len([]rune(body)) > 200 {
-			body = string([]rune(body)[:200]) + "..."
+		if runes := []rune(body); len(runes) > 200 {
+			body = string(runes[:200]) + "..."
 		}
 		results[i] = imapPollMessage{
 			From:        m.From,

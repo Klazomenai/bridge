@@ -110,7 +110,7 @@ func (t *SMTPSendTool) Execute(_ context.Context, input json.RawMessage) (string
 		return "", fmt.Errorf("recipient %q not in allowlist", recipient)
 	}
 
-	// Rate limiting.
+	// Rate limiting (pre-check only — count incremented after successful send).
 	if err := t.checkRateLimit(); err != nil {
 		return "", err
 	}
@@ -119,11 +119,12 @@ func (t *SMTPSendTool) Execute(_ context.Context, input json.RawMessage) (string
 		return "", err
 	}
 
+	t.incrementSendCount()
 	slog.Info("crest: email sent", "to", recipient)
 	return fmt.Sprintf("Email sent to %s.", recipient), nil
 }
 
-// checkRateLimit enforces the per-hour send cap.
+// checkRateLimit checks (but does not increment) the per-hour send cap.
 func (t *SMTPSendTool) checkRateLimit() error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -137,7 +138,12 @@ func (t *SMTPSendTool) checkRateLimit() error {
 	if t.sendCount >= maxSendsPerHour {
 		return fmt.Errorf("rate limit exceeded: %d sends per hour", maxSendsPerHour)
 	}
-
-	t.sendCount++
 	return nil
+}
+
+// incrementSendCount records a successful send against the rate limit.
+func (t *SMTPSendTool) incrementSendCount() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.sendCount++
 }
