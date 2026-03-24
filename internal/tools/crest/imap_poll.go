@@ -70,7 +70,7 @@ func (t *IMAPPollTool) Execute(ctx context.Context, input json.RawMessage) (stri
 	}
 
 	if len(msgs) == 0 {
-		return "[]", nil
+		return `{"messages":[],"total":0,"showing":0}`, nil
 	}
 
 	// Cap message count to keep output well within the orchestrator's 4096-rune
@@ -94,20 +94,12 @@ func (t *IMAPPollTool) Execute(ctx context.Context, input json.RawMessage) (stri
 		}
 	}
 
-	if total > maxMessages {
-		wrapper := struct {
-			Messages []imapPollMessage `json:"messages"`
-			Total    int               `json:"total"`
-			Showing  int               `json:"showing"`
-		}{Messages: results, Total: total, Showing: len(results)}
-		out, err := json.Marshal(wrapper)
-		if err != nil {
-			return "", fmt.Errorf("marshal results: %w", err)
-		}
-		return string(out), nil
-	}
-
-	out, err := json.Marshal(results)
+	wrapper := struct {
+		Messages []imapPollMessage `json:"messages"`
+		Total    int               `json:"total"`
+		Showing  int               `json:"showing"`
+	}{Messages: results, Total: total, Showing: len(results)}
+	out, err := json.Marshal(wrapper)
 	if err != nil {
 		return "", fmt.Errorf("marshal results: %w", err)
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -19,6 +20,25 @@ func mockPoll(msgs []basecrest.Message, err error) basecrest.PollFn {
 	}
 }
 
+type pollResult struct {
+	Messages []struct {
+		From        string `json:"from"`
+		Subject     string `json:"subject"`
+		BodyPreview string `json:"body_preview"`
+	} `json:"messages"`
+	Total   int `json:"total"`
+	Showing int `json:"showing"`
+}
+
+func parsePollResult(t *testing.T, result string) pollResult {
+	t.Helper()
+	var parsed pollResult
+	if err := json.Unmarshal([]byte(result), &parsed); err != nil {
+		t.Fatalf("failed to parse result JSON: %v\nraw: %s", err, result)
+	}
+	return parsed
+}
+
 func TestIMAPPollNoMessages(t *testing.T) {
 	tool := cresttools.NewIMAPPollToolWithFn(basecrest.IMAPConfig{}, mockPoll(nil, nil))
 
@@ -26,8 +46,12 @@ func TestIMAPPollNoMessages(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result != "[]" {
-		t.Errorf("expected empty JSON array, got: %q", result)
+	parsed := parsePollResult(t, result)
+	if len(parsed.Messages) != 0 {
+		t.Errorf("expected 0 messages, got %d", len(parsed.Messages))
+	}
+	if parsed.Total != 0 || parsed.Showing != 0 {
+		t.Errorf("expected total=0 showing=0, got total=%d showing=%d", parsed.Total, parsed.Showing)
 	}
 }
 
@@ -42,23 +66,18 @@ func TestIMAPPollWithMessages(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-
-	var parsed []struct {
-		From        string `json:"from"`
-		Subject     string `json:"subject"`
-		BodyPreview string `json:"body_preview"`
+	parsed := parsePollResult(t, result)
+	if len(parsed.Messages) != 2 {
+		t.Fatalf("expected 2 messages, got %d", len(parsed.Messages))
 	}
-	if err := json.Unmarshal([]byte(result), &parsed); err != nil {
-		t.Fatalf("failed to parse result JSON: %v", err)
+	if parsed.Total != 2 || parsed.Showing != 2 {
+		t.Errorf("expected total=2 showing=2, got total=%d showing=%d", parsed.Total, parsed.Showing)
 	}
-	if len(parsed) != 2 {
-		t.Fatalf("expected 2 messages, got %d", len(parsed))
+	if parsed.Messages[0].From != "alice@example.com" {
+		t.Errorf("expected alice, got %q", parsed.Messages[0].From)
 	}
-	if parsed[0].From != "alice@example.com" {
-		t.Errorf("expected alice, got %q", parsed[0].From)
-	}
-	if parsed[0].BodyPreview != "Short body." {
-		t.Errorf("expected full body for short message, got %q", parsed[0].BodyPreview)
+	if parsed.Messages[0].BodyPreview != "Short body." {
+		t.Errorf("expected full body for short message, got %q", parsed.Messages[0].BodyPreview)
 	}
 }
 
@@ -73,19 +92,42 @@ func TestIMAPPollBodyTruncated(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-
-	var parsed []struct {
-		BodyPreview string `json:"body_preview"`
-	}
-	if err := json.Unmarshal([]byte(result), &parsed); err != nil {
-		t.Fatal(err)
-	}
+	parsed := parsePollResult(t, result)
 	// 200 chars + "..."
-	if len([]rune(parsed[0].BodyPreview)) != 203 {
-		t.Errorf("expected 203 rune preview, got %d", len([]rune(parsed[0].BodyPreview)))
+	preview := parsed.Messages[0].BodyPreview
+	if len([]rune(preview)) != 203 {
+		t.Errorf("expected 203 rune preview, got %d", len([]rune(preview)))
 	}
-	if !strings.HasSuffix(parsed[0].BodyPreview, "...") {
+	if !strings.HasSuffix(preview, "...") {
 		t.Error("expected ... suffix on truncated preview")
+	}
+}
+
+func TestIMAPPollMessageCountCapped(t *testing.T) {
+	// Create 15 messages — should be capped to 10.
+	msgs := make([]basecrest.Message, 15)
+	for i := range msgs {
+		msgs[i] = basecrest.Message{
+			From:    fmt.Sprintf("user%d@example.com", i),
+			Subject: fmt.Sprintf("Message %d", i),
+			Body:    "body",
+		}
+	}
+	tool := cresttools.NewIMAPPollToolWithFn(basecrest.IMAPConfig{}, mockPoll(msgs, nil))
+
+	result, err := tool.Execute(t.Context(), json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	parsed := parsePollResult(t, result)
+	if parsed.Showing != 10 {
+		t.Errorf("expected showing=10, got %d", parsed.Showing)
+	}
+	if parsed.Total != 15 {
+		t.Errorf("expected total=15, got %d", parsed.Total)
+	}
+	if len(parsed.Messages) != 10 {
+		t.Errorf("expected 10 messages, got %d", len(parsed.Messages))
 	}
 }
 
