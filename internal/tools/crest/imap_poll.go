@@ -70,7 +70,7 @@ func (t *IMAPPollTool) Execute(ctx context.Context, input json.RawMessage) (stri
 	}
 
 	if len(msgs) == 0 {
-		return "No unseen messages.", nil
+		return "[]", nil
 	}
 
 	results := make([]imapPollMessage, len(msgs))

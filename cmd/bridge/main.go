@@ -40,7 +40,10 @@ func main() {
 	// --- Tool registry ---
 	toolReg := tools.NewRegistry()
 
-	// --- Crest email tools (optional — only registered if IMAP/SMTP configured) ---
+	// --- Crest email tools ---
+	// Registered as stubs when IMAP/SMTP is not configured so crew.yaml
+	// validation passes. Claude gets a clear "not configured" error if it
+	// tries to use them without the env vars.
 	imapHost := os.Getenv("CREST_IMAP_HOST")
 	if imapHost != "" {
 		imapUser := mustEnv("CREST_IMAP_USERNAME", "")
@@ -65,10 +68,18 @@ func main() {
 			Password: imapPass,
 			From:     imapUser,
 		}
-		smtpAllowlist := os.Getenv("CREST_SMTP_ALLOWLIST")
+		smtpAllowlist := mustEnv("CREST_SMTP_ALLOWLIST", "")
+		if smtpAllowlist == "" {
+			slog.Error("CREST_SMTP_ALLOWLIST is required when email tools are configured")
+			os.Exit(1)
+		}
 		toolReg.Register(cresttools.NewSMTPSendTool(smtpCfg, smtpAllowlist))
 
 		slog.Info("crest: email tools registered", "host", imapHost)
+	} else {
+		toolReg.Register(tools.NewStubTool("imap_poll", "Check email inbox (not configured)"))
+		toolReg.Register(tools.NewStubTool("smtp_send", "Send email (not configured)"))
+		slog.Info("crest: email tools registered as stubs (CREST_IMAP_HOST not set)")
 	}
 
 	// --- Crew registry ---

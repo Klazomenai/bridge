@@ -97,9 +97,14 @@ func (t *SMTPSendTool) Execute(_ context.Context, input json.RawMessage) (string
 		return "", fmt.Errorf("to, subject, and body are required")
 	}
 
-	// Allowlist enforcement.
+	// Normalise and validate recipient.
 	recipient := strings.TrimSpace(strings.ToLower(params.To))
-	if len(t.allowlist) > 0 && !t.allowlist[recipient] {
+	if recipient == "" {
+		return "", fmt.Errorf("to address is empty after normalisation")
+	}
+
+	// Allowlist enforcement (default deny — empty allowlist rejects all).
+	if !t.allowlist[recipient] {
 		slog.Warn("crest: smtp_send rejected — recipient not in allowlist",
 			"to", recipient)
 		return "", fmt.Errorf("recipient %q not in allowlist", recipient)
@@ -110,11 +115,11 @@ func (t *SMTPSendTool) Execute(_ context.Context, input json.RawMessage) (string
 		return "", err
 	}
 
-	if err := t.sendFn(t.cfg, params.To, params.Subject, params.Body); err != nil {
+	if err := t.sendFn(t.cfg, recipient, params.Subject, params.Body); err != nil {
 		return "", err
 	}
 
-	slog.Info("crest: email sent", "to", recipient, "subject", params.Subject)
+	slog.Info("crest: email sent", "to", recipient)
 	return fmt.Sprintf("Email sent to %s.", recipient), nil
 }
 

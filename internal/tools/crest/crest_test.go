@@ -26,8 +26,8 @@ func TestIMAPPollNoMessages(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result != "No unseen messages." {
-		t.Errorf("expected no messages text, got: %q", result)
+	if result != "[]" {
+		t.Errorf("expected empty JSON array, got: %q", result)
 	}
 }
 
@@ -193,24 +193,23 @@ func TestSMTPSendAllowlistCaseInsensitive(t *testing.T) {
 	}
 }
 
-func TestSMTPSendEmptyAllowlistAllowsAll(t *testing.T) {
-	var records []sendRecord
+func TestSMTPSendEmptyAllowlistDeniesAll(t *testing.T) {
 	tool := cresttools.NewSMTPSendToolWithFn(basecrest.SMTPConfig{},
-		"", mockSend(&records, nil))
+		"", mockSend(nil, nil))
 
 	_, err := tool.Execute(t.Context(),
 		json.RawMessage(`{"to":"anyone@anywhere.com","subject":"x","body":"x"}`))
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if err == nil {
+		t.Fatal("expected allowlist rejection with empty allowlist")
 	}
-	if len(records) != 1 {
-		t.Fatal("expected send to succeed with empty allowlist")
+	if !strings.Contains(err.Error(), "not in allowlist") {
+		t.Errorf("unexpected error: %v", err)
 	}
 }
 
 func TestSMTPSendRateLimit(t *testing.T) {
 	tool := cresttools.NewSMTPSendToolWithFn(basecrest.SMTPConfig{},
-		"", mockSend(nil, nil))
+		"x@x.com", mockSend(nil, nil))
 
 	// Send maxSendsPerHour (5) times — all should succeed.
 	for i := range 5 {
@@ -234,7 +233,7 @@ func TestSMTPSendRateLimit(t *testing.T) {
 
 func TestSMTPSendMissingFields(t *testing.T) {
 	tool := cresttools.NewSMTPSendToolWithFn(basecrest.SMTPConfig{},
-		"", mockSend(nil, nil))
+		"x@x.com", mockSend(nil, nil))
 
 	cases := []struct {
 		name  string
@@ -256,7 +255,7 @@ func TestSMTPSendMissingFields(t *testing.T) {
 
 func TestSMTPSendError(t *testing.T) {
 	tool := cresttools.NewSMTPSendToolWithFn(basecrest.SMTPConfig{},
-		"", mockSend(nil, errors.New("smtp timeout")))
+		"x@x.com", mockSend(nil, errors.New("smtp timeout")))
 
 	_, err := tool.Execute(t.Context(),
 		json.RawMessage(`{"to":"x@x.com","subject":"x","body":"x"}`))
