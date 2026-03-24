@@ -58,7 +58,7 @@ func main() {
 	ctxManager := ctxbuf.NewManager(ctxbuf.DefaultMaxTurns)
 
 	// --- Orchestrator ---
-	orch := orchestrator.New(registry, ctxManager, apiKey)
+	orch := orchestrator.New(registry, ctxManager, toolReg, apiKey)
 
 	// --- Matrix bot ---
 	botCfg := bot.Config{

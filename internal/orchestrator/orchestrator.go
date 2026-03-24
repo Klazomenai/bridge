@@ -11,6 +11,7 @@ import (
 
 	ctxbuf "klazomenai/bridge/internal/context"
 	"klazomenai/bridge/internal/crew"
+	"klazomenai/bridge/internal/tools"
 )
 
 const (
@@ -41,22 +42,30 @@ type Orchestrator struct {
 	registry *crew.Registry
 	context  *ctxbuf.Manager
 	client   ClaudeClient
+	tools    *tools.Registry
 }
 
 // New creates an Orchestrator with the real Anthropic client.
 // apiKey is the Anthropic API key read from the mounted secret file.
-func New(registry *crew.Registry, ctxManager *ctxbuf.Manager, apiKey string) *Orchestrator {
+func New(registry *crew.Registry, ctxManager *ctxbuf.Manager, toolReg *tools.Registry, apiKey string) *Orchestrator {
+	if toolReg == nil {
+		panic("orchestrator: toolReg must not be nil")
+	}
 	c := anthropic.NewClient(option.WithAPIKey(apiKey))
 	return &Orchestrator{
 		registry: registry,
 		context:  ctxManager,
 		client:   &c.Messages,
+		tools:    toolReg,
 	}
 }
 
 // NewWithClient creates an Orchestrator with a custom ClaudeClient (for testing).
-func NewWithClient(registry *crew.Registry, ctxManager *ctxbuf.Manager, client ClaudeClient) *Orchestrator {
-	return &Orchestrator{registry: registry, context: ctxManager, client: client}
+func NewWithClient(registry *crew.Registry, ctxManager *ctxbuf.Manager, toolReg *tools.Registry, client ClaudeClient) *Orchestrator {
+	if toolReg == nil {
+		panic("orchestrator: toolReg must not be nil")
+	}
+	return &Orchestrator{registry: registry, context: ctxManager, tools: toolReg, client: client}
 }
 
 // Route selects the crew member for this message.
