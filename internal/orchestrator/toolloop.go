@@ -115,8 +115,13 @@ func (o *Orchestrator) executeToolCalls(ctx context.Context, content []anthropic
 
 		tool := o.tools.Get(block.Name)
 		if tool == nil {
+			slog.Warn("orchestrator: unknown tool requested",
+				"tool", block.Name,
+				"crew_id", crewID,
+				"room_id", roomID,
+			)
 			results = append(results, anthropic.NewToolResultBlock(
-				block.ID, fmt.Sprintf("unknown tool: %q", block.Name), true))
+				block.ID, fmt.Sprintf("tool error: unknown tool: %q", block.Name), true))
 			continue
 		}
 

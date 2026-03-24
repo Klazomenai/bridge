@@ -155,3 +155,22 @@ func TestExecuteWithSandbox_InvalidMaxOutputLenClamped(t *testing.T) {
 		t.Errorf("expected length %d, got %d", tools.DefaultMaxOutputLen+len("\n[truncated]"), len(result))
 	}
 }
+
+func TestExecuteWithSandbox_ErrorMessageTruncated(t *testing.T) {
+	// A tool returning an oversized error message must be capped at MaxOutputLen.
+	tool := &testTool{name: "bigerr", execFn: func(_ context.Context, _ json.RawMessage) (string, error) {
+		return "", fmt.Errorf("%s", strings.Repeat("e", 10000))
+	}}
+	cfg := tools.SandboxConfig{Timeout: 30 * time.Second, MaxOutputLen: 100}
+
+	result, isError := tools.ExecuteWithSandbox(context.Background(), tool, nil, cfg, testMeta())
+	if !isError {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(result, "[truncated]") {
+		t.Error("expected truncation of oversized error message")
+	}
+	if !strings.HasPrefix(result, "tool error: ") {
+		t.Errorf("expected 'tool error: ' prefix, got %q", result[:30])
+	}
+}
