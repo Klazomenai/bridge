@@ -18,6 +18,7 @@ import (
 	"klazomenai/bridge/internal/crew"
 	"klazomenai/bridge/internal/orchestrator"
 	"klazomenai/bridge/internal/tools"
+	cresttools "klazomenai/bridge/internal/tools/crest"
 )
 
 func main() {
@@ -38,7 +39,48 @@ func main() {
 
 	// --- Tool registry ---
 	toolReg := tools.NewRegistry()
-	// Tools will be registered here as they are implemented (e.g. crest email tools, maren cluster tools).
+
+	// --- Crest email tools ---
+	// Registered as stubs when IMAP/SMTP is not configured so crew.yaml
+	// validation passes. Claude gets a clear "not configured" error if it
+	// tries to use them without the env vars.
+	imapHost := os.Getenv("CREST_IMAP_HOST")
+	if imapHost != "" {
+		imapUser := mustEnv("CREST_IMAP_USERNAME", "")
+		imapPass := mustEnv("CREST_IMAP_PASSWORD", "")
+		if imapUser == "" || imapPass == "" {
+			slog.Error("CREST_IMAP_HOST is set but CREST_IMAP_USERNAME or CREST_IMAP_PASSWORD is missing")
+			os.Exit(1)
+		}
+		imapCfg := crest.IMAPConfig{
+			Host:     imapHost,
+			Port:     1143,
+			Username: imapUser,
+			Password: imapPass,
+			Mailbox:  "INBOX",
+		}
+		toolReg.Register(cresttools.NewIMAPPollTool(imapCfg))
+
+		smtpCfg := crest.SMTPConfig{
+			Host:     imapHost, // ProtonMail bridge uses same host for IMAP and SMTP
+			Port:     1025,
+			Username: imapUser,
+			Password: imapPass,
+			From:     imapUser,
+		}
+		smtpAllowlist := mustEnv("CREST_SMTP_ALLOWLIST", "")
+		if smtpAllowlist == "" {
+			slog.Error("CREST_SMTP_ALLOWLIST is required when email tools are configured")
+			os.Exit(1)
+		}
+		toolReg.Register(cresttools.NewSMTPSendTool(smtpCfg, smtpAllowlist))
+
+		slog.Info("crest: email tools registered", "host", imapHost)
+	} else {
+		toolReg.Register(tools.NewStubTool("imap_poll", "Check email inbox (not configured)"))
+		toolReg.Register(tools.NewStubTool("smtp_send", "Send email (not configured)"))
+		slog.Info("crest: email tools registered as stubs (CREST_IMAP_HOST not set)")
+	}
 
 	// --- Crew registry ---
 	registryPath := mustEnv("CREW_REGISTRY_PATH", "/config/crew.yaml")
@@ -81,25 +123,17 @@ func main() {
 		os.Exit(1)
 	}
 
-	// --- Crest IMAP poller (optional — only started if configured) ---
-	imapHost := os.Getenv("CREST_IMAP_HOST")
+	// --- Crest IMAP poller (optional — only started if email tools configured) ---
 	if imapHost != "" {
-		imapUser := mustEnv("CREST_IMAP_USERNAME", "")
-		imapPass := mustEnv("CREST_IMAP_PASSWORD", "")
-		if imapUser == "" || imapPass == "" {
-			slog.Error("CREST_IMAP_HOST is set but CREST_IMAP_USERNAME or CREST_IMAP_PASSWORD is missing — Crest poller not started")
-			os.Exit(1)
-		}
 		imapCfg := crest.IMAPConfig{
 			Host:     imapHost,
 			Port:     1143,
-			Username: imapUser,
-			Password: imapPass,
+			Username: mustEnv("CREST_IMAP_USERNAME", ""),
+			Password: mustEnv("CREST_IMAP_PASSWORD", ""),
 			Mailbox:  "INBOX",
 		}
 		go crest.Poller(ctx, imapCfg, 300*time.Second, func(msgs []crest.Message) {
 			slog.Info("crest: received signals", "count", len(msgs))
-			// Future: route signals to Crest crew member for processing.
 		})
 		slog.Info("crest: imap poller started", "host", imapHost)
 	}
