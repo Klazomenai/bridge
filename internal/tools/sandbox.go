@@ -37,11 +37,22 @@ func DefaultSandboxConfig() SandboxConfig {
 	}
 }
 
-// ExecuteWithSandbox runs a tool within a timeout, recovers panics, caps output,
-// and emits structured audit logs. Returns the result string and whether the
-// result represents an error.
+// ExecuteWithSandbox runs a tool within a cooperative timeout, recovers panics,
+// caps output, and emits structured audit logs. Returns the result string and
+// whether the result represents an error.
+//
+// The timeout is cooperative: it relies on the tool honouring ctx.Done(). A tool
+// that blocks without checking context will stall the caller. All built-in tools
+// (imap_poll, smtp_send, exec-based tools) respect context cancellation. If
+// non-cooperative tools are introduced, consider wrapping execution in a goroutine
+// with select on ctx.Done() — noting the goroutine-leak tradeoff.
 func ExecuteWithSandbox(ctx context.Context, tool ToolDefinition, input json.RawMessage,
 	cfg SandboxConfig, meta SandboxMeta) (result string, isError bool) {
+
+	// Clamp invalid MaxOutputLen to the default to prevent slice panics.
+	if cfg.MaxOutputLen <= 0 {
+		cfg.MaxOutputLen = DefaultMaxOutputLen
+	}
 
 	start := time.Now()
 
@@ -82,7 +93,7 @@ func ExecuteWithSandbox(ctx context.Context, tool ToolDefinition, input json.Raw
 	slog.Info("sandbox: tool executed",
 		"tool", meta.ToolName, "crew", meta.CrewID,
 		"room", meta.RoomID, "duration_ms", elapsed.Milliseconds(),
-		"output_len", len(output))
+		"output_len_bytes", len(output))
 
 	return output, false
 }

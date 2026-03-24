@@ -135,3 +135,23 @@ func TestExecuteWithSandbox_OutputNotTruncatedAtLimit(t *testing.T) {
 		t.Errorf("expected length 100, got %d", len(result))
 	}
 }
+
+func TestExecuteWithSandbox_InvalidMaxOutputLenClamped(t *testing.T) {
+	// A zero or negative MaxOutputLen must not panic — it should clamp to default.
+	tool := &testTool{name: "big", execFn: func(_ context.Context, _ json.RawMessage) (string, error) {
+		return strings.Repeat("x", 5000), nil
+	}}
+	cfg := tools.SandboxConfig{Timeout: 30 * time.Second, MaxOutputLen: 0}
+
+	result, isError := tools.ExecuteWithSandbox(context.Background(), tool, nil, cfg, testMeta())
+	if isError {
+		t.Fatal("unexpected error")
+	}
+	if !strings.Contains(result, "[truncated]") {
+		t.Error("expected truncation at default cap when MaxOutputLen is 0")
+	}
+	// Clamped to DefaultMaxOutputLen (4096) + len("\n[truncated]") = 4108
+	if len(result) != tools.DefaultMaxOutputLen+len("\n[truncated]") {
+		t.Errorf("expected length %d, got %d", tools.DefaultMaxOutputLen+len("\n[truncated]"), len(result))
+	}
+}
