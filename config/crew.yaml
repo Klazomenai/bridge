@@ -24,7 +24,7 @@ crew:
     role: "Signalman"
     model: "claude-sonnet-4-6"
     verbosity: dispatch
-    tools: []
+    tools: [imap_poll, smtp_send]
     voice:
       model: "en_US-lessac-high.onnx"
       announces_as: "Crest:"
