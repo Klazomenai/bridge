@@ -48,6 +48,9 @@ type Orchestrator struct {
 // New creates an Orchestrator with the real Anthropic client.
 // apiKey is the Anthropic API key read from the mounted secret file.
 func New(registry *crew.Registry, ctxManager *ctxbuf.Manager, toolReg *tools.Registry, apiKey string) *Orchestrator {
+	if toolReg == nil {
+		panic("orchestrator: toolReg must not be nil")
+	}
 	c := anthropic.NewClient(option.WithAPIKey(apiKey))
 	return &Orchestrator{
 		registry: registry,
@@ -59,6 +62,9 @@ func New(registry *crew.Registry, ctxManager *ctxbuf.Manager, toolReg *tools.Reg
 
 // NewWithClient creates an Orchestrator with a custom ClaudeClient (for testing).
 func NewWithClient(registry *crew.Registry, ctxManager *ctxbuf.Manager, toolReg *tools.Registry, client ClaudeClient) *Orchestrator {
+	if toolReg == nil {
+		panic("orchestrator: toolReg must not be nil")
+	}
 	return &Orchestrator{registry: registry, context: ctxManager, tools: toolReg, client: client}
 }
 

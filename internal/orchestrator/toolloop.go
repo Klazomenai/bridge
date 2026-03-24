@@ -64,10 +64,7 @@ func (o *Orchestrator) runToolLoop(ctx context.Context, c crew.Crew, messages []
 		}
 
 		// Claude wants to use tools — execute each one and collect results.
-		toolResults, err := o.executeToolCalls(ctx, resp.Content)
-		if err != nil {
-			return nil, err
-		}
+		toolResults := o.executeToolCalls(ctx, resp.Content)
 
 		// Build the assistant message (preserving all content blocks including tool_use).
 		assistantBlocks := make([]anthropic.ContentBlockParamUnion, 0, len(resp.Content))
@@ -94,7 +91,7 @@ func (o *Orchestrator) runToolLoop(ctx context.Context, c crew.Crew, messages []
 }
 
 // executeToolCalls runs each tool_use block and returns tool_result blocks.
-func (o *Orchestrator) executeToolCalls(ctx context.Context, content []anthropic.ContentBlockUnion) ([]anthropic.ContentBlockParamUnion, error) {
+func (o *Orchestrator) executeToolCalls(ctx context.Context, content []anthropic.ContentBlockUnion) []anthropic.ContentBlockParamUnion {
 	var results []anthropic.ContentBlockParamUnion
 
 	for _, block := range content {
@@ -106,7 +103,7 @@ func (o *Orchestrator) executeToolCalls(ctx context.Context, content []anthropic
 		results = append(results, anthropic.NewToolResultBlock(block.ID, result, isError))
 	}
 
-	return results, nil
+	return results
 }
 
 // executeSingleTool runs one tool with timeout and output capping.
@@ -125,9 +122,14 @@ func (o *Orchestrator) executeSingleTool(ctx context.Context, name string, input
 		return fmt.Sprintf("tool error: %s", err.Error()), true
 	}
 
-	// Cap output to prevent context bloat.
+	// Cap output to prevent context bloat. Truncate by runes to avoid
+	// splitting a UTF-8 codepoint.
 	if len(output) > maxToolOutputLen {
-		output = output[:maxToolOutputLen] + "\n[truncated]"
+		runes := []rune(output)
+		if len(runes) > maxToolOutputLen {
+			output = string(runes[:maxToolOutputLen])
+		}
+		output += "\n[truncated]"
 	}
 
 	slog.Info("orchestrator: tool executed",
