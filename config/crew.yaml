@@ -6,6 +6,7 @@ crew:
     role: "Shipwright"
     model: "claude-sonnet-4-6"
     verbosity: dispatch
+    tools: []
     voice:
       model: "en_GB-cori-high.onnx"
       announces_as: "Maren:"
@@ -23,6 +24,7 @@ crew:
     role: "Signalman"
     model: "claude-sonnet-4-6"
     verbosity: dispatch
+    tools: []
     voice:
       model: "en_US-lessac-high.onnx"
       announces_as: "Crest:"
