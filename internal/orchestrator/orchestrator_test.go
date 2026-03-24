@@ -503,6 +503,37 @@ func TestToolUseUnknownToolReturnsError(t *testing.T) {
 	}
 }
 
+func TestToolUseCrewAllowlistEnforced(t *testing.T) {
+	// Register echo_tool AND fail_tool, but crest only declares echo_tool.
+	// Claude asks for fail_tool — should be rejected by allowlist.
+	toolReg := newToolRegistry(&echoTool{}, &failTool{})
+
+	o, mock := newTestOrchestrator(t, toolReg,
+		toolUseResponse("tu_1", "fail_tool", json.RawMessage(`{}`)),
+		textResponse("Tool not allowed."),
+	)
+
+	resp, err := o.Handle(t.Context(), "!room:server", "try fail_tool", "crest")
+	if err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	if resp.Text != "Tool not allowed." {
+		t.Errorf("unexpected text: %q", resp.Text)
+	}
+
+	// Verify isError=true with "not allowed" message.
+	secondCall := mock.calls[1]
+	lastMsg := secondCall.Messages[len(secondCall.Messages)-1]
+	toolResult := lastMsg.Content[0].OfToolResult
+	if toolResult.IsError.Value != true {
+		t.Error("expected isError=true for disallowed tool")
+	}
+	resultText := toolResult.Content[0].OfText.Text
+	if !strings.Contains(resultText, "not allowed") {
+		t.Errorf("expected 'not allowed' in result, got: %q", resultText)
+	}
+}
+
 func TestToolUseMaxIterationsExceeded(t *testing.T) {
 	toolReg := newToolRegistry(&echoTool{})
 
@@ -673,15 +704,11 @@ func TestToolUseAPIErrorDuringLoop(t *testing.T) {
 	reg := newTestRegistry(t)
 	mgr := ctxbuf.NewManager(ctxbuf.DefaultMaxTurns)
 
-	callCount := 0
 	mock := &mockClaudeClient{
 		responses: []*anthropic.Message{
 			toolUseResponse("tu_1", "echo_tool", json.RawMessage(`{"msg":"ok"}`)),
 		},
 	}
-	// Override New to fail on second call.
-	origNew := mock.New
-	_ = origNew
 	failOnSecond := &apiFailOnCallN{
 		inner: mock,
 		failN: 1, // 0-indexed: fail on second call
@@ -696,7 +723,6 @@ func TestToolUseAPIErrorDuringLoop(t *testing.T) {
 	if !strings.Contains(err.Error(), "api exploded") {
 		t.Errorf("unexpected error: %v", err)
 	}
-	_ = callCount
 }
 
 // apiFailOnCallN fails on the Nth call (0-indexed).

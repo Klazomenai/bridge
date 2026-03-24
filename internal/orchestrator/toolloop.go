@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -64,7 +65,8 @@ func (o *Orchestrator) runToolLoop(ctx context.Context, c crew.Crew, messages []
 		}
 
 		// Claude wants to use tools — execute each one and collect results.
-		toolResults := o.executeToolCalls(ctx, resp.Content)
+		allowedTools := c.Tools()
+		toolResults := o.executeToolCalls(ctx, resp.Content, allowedTools)
 
 		// Build the assistant message (preserving all content blocks including tool_use).
 		assistantBlocks := make([]anthropic.ContentBlockParamUnion, 0, len(resp.Content))
@@ -91,11 +93,25 @@ func (o *Orchestrator) runToolLoop(ctx context.Context, c crew.Crew, messages []
 }
 
 // executeToolCalls runs each tool_use block and returns tool_result blocks.
-func (o *Orchestrator) executeToolCalls(ctx context.Context, content []anthropic.ContentBlockUnion) []anthropic.ContentBlockParamUnion {
+// allowedTools is the crew member's declared tool allowlist for defense in depth.
+func (o *Orchestrator) executeToolCalls(ctx context.Context, content []anthropic.ContentBlockUnion, allowedTools []string) []anthropic.ContentBlockParamUnion {
+	allowed := make(map[string]bool, len(allowedTools))
+	for _, t := range allowedTools {
+		allowed[t] = true
+	}
+
 	var results []anthropic.ContentBlockParamUnion
 
 	for _, block := range content {
 		if block.Type != "tool_use" {
+			continue
+		}
+
+		if !allowed[block.Name] {
+			slog.Warn("orchestrator: tool not in crew allowlist",
+				"tool", block.Name, "allowed", allowedTools)
+			results = append(results, anthropic.NewToolResultBlock(
+				block.ID, fmt.Sprintf("tool %q not allowed for this crew member", block.Name), true))
 			continue
 		}
 
@@ -107,7 +123,7 @@ func (o *Orchestrator) executeToolCalls(ctx context.Context, content []anthropic
 }
 
 // executeSingleTool runs one tool with timeout and output capping.
-func (o *Orchestrator) executeSingleTool(ctx context.Context, name string, input []byte) (result string, isError bool) {
+func (o *Orchestrator) executeSingleTool(ctx context.Context, name string, input json.RawMessage) (result string, isError bool) {
 	start := time.Now()
 
 	toolCtx, cancel := context.WithTimeout(ctx, toolExecTimeout)
@@ -122,14 +138,10 @@ func (o *Orchestrator) executeSingleTool(ctx context.Context, name string, input
 		return fmt.Sprintf("tool error: %s", err.Error()), true
 	}
 
-	// Cap output to prevent context bloat. Truncate by runes to avoid
-	// splitting a UTF-8 codepoint.
-	if len(output) > maxToolOutputLen {
-		runes := []rune(output)
-		if len(runes) > maxToolOutputLen {
-			output = string(runes[:maxToolOutputLen])
-		}
-		output += "\n[truncated]"
+	// Cap output by rune count to prevent context bloat without splitting
+	// UTF-8 codepoints.
+	if runes := []rune(output); len(runes) > maxToolOutputLen {
+		output = string(runes[:maxToolOutputLen]) + "\n[truncated]"
 	}
 
 	slog.Info("orchestrator: tool executed",
