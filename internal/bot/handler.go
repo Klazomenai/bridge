@@ -37,8 +37,9 @@ func (b *Bot) handleMessage(ctx context.Context, evt *event.Event) {
 		return
 	}
 
-	for _, resp := range responses {
-		if err := b.sender.Send(ctx, evt.RoomID, &resp); err != nil {
+	for i := range responses {
+		resp := &responses[i]
+		if err := b.sender.Send(ctx, evt.RoomID, resp); err != nil {
 			slog.Error("bot: send failed", "room", evt.RoomID, "crew", resp.CrewID, "err", err)
 		}
 	}

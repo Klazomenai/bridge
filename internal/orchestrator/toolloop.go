@@ -146,8 +146,8 @@ func (o *Orchestrator) executeToolCalls(ctx context.Context, content []anthropic
 		meta := tools.SandboxMeta{CrewID: crewID, RoomID: roomID, ToolName: block.Name}
 		result, isError := tools.ExecuteWithSandbox(ctx, tool, block.Input, o.sandboxCfg, meta)
 
-		// Detect delegation sentinel — intercept before it reaches Claude.
-		if !isError {
+		// Detect delegation sentinel — only from the delegate_to_crew tool.
+		if !isError && block.Name == tools.DelegateToolName {
 			if targetCrew, delegateCtx, ok := tools.ParseDelegation(result); ok {
 				slog.Info("orchestrator: delegation requested",
 					"from", crewID, "to", targetCrew, "room", roomID)

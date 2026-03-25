@@ -127,11 +127,14 @@ func (o *Orchestrator) handleWithDepth(ctx context.Context, roomID, userText, re
 	for _, turn := range result.turns {
 		buf.Add(turn)
 	}
-	if result.text != "" {
+	if result.text != "" && result.delegation == nil {
 		buf.Add(anthropic.NewAssistantMessage(anthropic.NewTextBlock(result.text)))
 	}
 
-	responses := []Response{*buildResponse(c, result.text)}
+	var responses []Response
+	if result.text != "" {
+		responses = append(responses, *buildResponse(c, result.text))
+	}
 
 	// If the crew member delegated, recursively handle the delegated crew.
 	if result.delegation != nil && depth < maxDelegationDepth {

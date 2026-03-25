@@ -344,3 +344,24 @@ func TestCrewRequestExtractedBeforeRouting(t *testing.T) {
 		t.Errorf("expected requestedCrew=%q, got %q", "crest", orch.crewRequests[0])
 	}
 }
+
+func TestMultipleResponsesSentSeparately(t *testing.T) {
+	orch := &mockOrch{responses: []orchestrator.Response{
+		{Text: "Hull's sound.", CrewID: "maren", Verbosity: "dispatch"},
+		{Text: "Signal received.", CrewID: "crest", Verbosity: "dispatch"},
+	}}
+	sender := &mockSender{}
+	bot := newTestBot(t, orch, sender, "@bridge:server")
+
+	bot.handleMessage(t.Context(), textEvent("@captain:server", "!room:server", "status report"))
+
+	if len(sender.calls) != 2 {
+		t.Fatalf("expected 2 sender calls, got %d", len(sender.calls))
+	}
+	if sender.calls[0].CrewID != "maren" {
+		t.Errorf("first send crew = %q, want maren", sender.calls[0].CrewID)
+	}
+	if sender.calls[1].CrewID != "crest" {
+		t.Errorf("second send crew = %q, want crest", sender.calls[1].CrewID)
+	}
+}
