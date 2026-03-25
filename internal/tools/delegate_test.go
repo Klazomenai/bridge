@@ -80,6 +80,19 @@ func TestDelegateToolNormalisesInput(t *testing.T) {
 	}
 }
 
+func TestDelegateToolRejectsColonInCrew(t *testing.T) {
+	d := &tools.DelegateTool{}
+	input, _ := json.Marshal(map[string]string{"crew": "crest:evil", "context": "test"})
+
+	_, err := d.Execute(context.Background(), input)
+	if err == nil {
+		t.Fatal("expected error for colon in crew ID")
+	}
+	if !strings.Contains(err.Error(), "must not contain ':'") {
+		t.Errorf("error = %q, want colon rejection", err.Error())
+	}
+}
+
 func TestParseDelegationNotSentinel(t *testing.T) {
 	_, _, ok := tools.ParseDelegation("just a normal result")
 	if ok {

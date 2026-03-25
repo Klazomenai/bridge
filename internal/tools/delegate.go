@@ -58,6 +58,9 @@ func (d *DelegateTool) Execute(_ context.Context, input json.RawMessage) (string
 	if params.Crew == "" {
 		return "", fmt.Errorf("crew is required")
 	}
+	if strings.Contains(params.Crew, ":") {
+		return "", fmt.Errorf("crew ID must not contain ':'")
+	}
 	if params.Context == "" {
 		return "", fmt.Errorf("context is required")
 	}
