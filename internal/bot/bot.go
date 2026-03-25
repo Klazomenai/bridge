@@ -24,7 +24,7 @@ import (
 // OrchestratorI is the subset of orchestrator.Orchestrator used by the bot.
 // Keeping it as an interface allows injection of test doubles.
 type OrchestratorI interface {
-	Handle(ctx context.Context, roomID, userText, requestedCrew string) (*orchestrator.Response, error)
+	Handle(ctx context.Context, roomID, userText, requestedCrew string) ([]orchestrator.Response, error)
 }
 
 // DefaultCryptoDBPath is the default path for the E2EE crypto store SQLite DB.
