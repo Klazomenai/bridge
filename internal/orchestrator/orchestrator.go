@@ -153,6 +153,16 @@ func (o *Orchestrator) handleWithDepth(ctx context.Context, roomID, userText, re
 		slog.Warn("orchestrator: delegation depth exceeded",
 			"from", c.ID(), "to", result.delegation.crewID,
 			"depth", depth, "max", maxDelegationDepth)
+		// If the crew delegated with no text, the user would receive nothing.
+		// Add an explanation so the delegation limit is visible.
+		if len(responses) == 0 {
+			responses = append(responses, Response{
+				Text:       fmt.Sprintf("[delegation to %s not followed — depth limit reached]", result.delegation.crewID),
+				CrewID:     c.ID(),
+				CrewMember: c.Name(),
+				Verbosity:  c.Verbosity(),
+			})
+		}
 	}
 
 	return responses, nil
