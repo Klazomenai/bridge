@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"maunium.net/go/mautrix"
 	"maunium.net/go/mautrix/event"
@@ -219,9 +220,28 @@ func (s *mockSender) Send(_ context.Context, _ id.RoomID, resp *orchestrator.Res
 	return s.err
 }
 
+// mockTyper records typing calls.
+type mockTyper struct {
+	calls []mockTypingCall
+}
+
+type mockTypingCall struct {
+	typing bool
+}
+
+func (t *mockTyper) SetTyping(_ context.Context, _ id.RoomID, typing bool, _ time.Duration) error {
+	t.calls = append(t.calls, mockTypingCall{typing: typing})
+	return nil
+}
+
 // newTestBot creates a Bot with mock dependencies for unit testing.
 // It does NOT call Start (no Matrix connection needed).
 func newTestBot(t *testing.T, orch OrchestratorI, sender Sender, selfUserID id.UserID) *Bot {
+	t.Helper()
+	return newTestBotWithTyper(t, orch, sender, &mockTyper{}, selfUserID)
+}
+
+func newTestBotWithTyper(t *testing.T, orch OrchestratorI, sender Sender, typer Typer, selfUserID id.UserID) *Bot {
 	t.Helper()
 	client, err := mautrix.NewClient("https://matrix.example.com", selfUserID, "test-token")
 	if err != nil {
@@ -231,6 +251,7 @@ func newTestBot(t *testing.T, orch OrchestratorI, sender Sender, selfUserID id.U
 		client: client,
 		orch:   orch,
 		sender: sender,
+		typer:  typer,
 		cfg: Config{
 			Username:  string(selfUserID),
 			KnownCrew: []string{"maren", "crest"},
@@ -363,5 +384,109 @@ func TestMultipleResponsesSentSeparately(t *testing.T) {
 	}
 	if sender.calls[1].CrewID != "crest" {
 		t.Errorf("second send crew = %q, want crest", sender.calls[1].CrewID)
+	}
+}
+
+// eventLog records the order of typing and send operations for ordering assertions.
+type eventLog struct {
+	events []string
+}
+
+// orderingSender wraps mockSender and logs to a shared eventLog.
+type orderingSender struct {
+	inner *mockSender
+	log   *eventLog
+}
+
+func (s *orderingSender) Send(ctx context.Context, roomID id.RoomID, resp *orchestrator.Response) error {
+	s.log.events = append(s.log.events, "send:"+resp.CrewID)
+	return s.inner.Send(ctx, roomID, resp)
+}
+
+// orderingTyper wraps mockTyper and logs to a shared eventLog.
+type orderingTyper struct {
+	inner *mockTyper
+	log   *eventLog
+}
+
+func (t *orderingTyper) SetTyping(ctx context.Context, roomID id.RoomID, typing bool, timeout time.Duration) error {
+	if typing {
+		t.log.events = append(t.log.events, "typing:start")
+	} else {
+		t.log.events = append(t.log.events, "typing:stop")
+	}
+	return t.inner.SetTyping(ctx, roomID, typing, timeout)
+}
+
+func TestTypingIndicatorSentBeforeResponse(t *testing.T) {
+	orch := &mockOrch{responses: []orchestrator.Response{{Text: "Aye", CrewID: "maren", Verbosity: "dispatch"}}}
+	log := &eventLog{}
+	sender := &orderingSender{inner: &mockSender{}, log: log}
+	typer := &orderingTyper{inner: &mockTyper{}, log: log}
+	bot := newTestBotWithTyper(t, orch, sender, typer, "@bridge:server")
+
+	bot.handleMessage(t.Context(), textEvent("@captain:server", "!room:server", "hull check"))
+
+	// Verify ordering: typing:start → typing:stop → send:maren
+	if len(log.events) < 3 {
+		t.Fatalf("expected at least 3 events, got %d: %v", len(log.events), log.events)
+	}
+	if log.events[0] != "typing:start" {
+		t.Errorf("event[0] = %q, want typing:start", log.events[0])
+	}
+	if log.events[1] != "typing:stop" {
+		t.Errorf("event[1] = %q, want typing:stop", log.events[1])
+	}
+	if log.events[2] != "send:maren" {
+		t.Errorf("event[2] = %q, want send:maren", log.events[2])
+	}
+}
+
+// slowOrch simulates a slow orchestrator that respects context cancellation.
+type slowOrch struct {
+	delay     time.Duration
+	responses []orchestrator.Response
+	err       error
+}
+
+func (m *slowOrch) Handle(ctx context.Context, _, _, _ string) ([]orchestrator.Response, error) {
+	select {
+	case <-time.After(m.delay):
+		return m.responses, m.err
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+func TestTimeoutSendsGracefulMessage(t *testing.T) {
+	// Use a very short timeout by calling awaitWithTyping directly.
+	orch := &slowOrch{delay: 5 * time.Second, responses: []orchestrator.Response{{Text: "too late"}}}
+	sender := &mockSender{}
+	typer := &mockTyper{}
+	bot := newTestBotWithTyper(t, orch, sender, typer, "@bridge:server")
+
+	// Create a context that times out quickly.
+	ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
+	defer cancel()
+
+	ch := make(chan orchResult, 1)
+	go func() {
+		responses, err := orch.Handle(ctx, "!room:server", "test", "")
+		ch <- orchResult{responses, err}
+	}()
+
+	bot.awaitWithTyping(t.Context(), ctx, "!room:server", ch)
+
+	// Should have sent the timeout message.
+	if len(sender.calls) != 1 {
+		t.Fatalf("expected 1 sender call (timeout message), got %d", len(sender.calls))
+	}
+	if sender.calls[0].Text != "The crew ran out of time on this one, Captain." {
+		t.Errorf("unexpected timeout text: %q", sender.calls[0].Text)
+	}
+	// Typing should have been cancelled.
+	last := typer.calls[len(typer.calls)-1]
+	if last.typing {
+		t.Error("typing should be cancelled after timeout")
 	}
 }
