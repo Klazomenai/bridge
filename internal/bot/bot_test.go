@@ -387,29 +387,58 @@ func TestMultipleResponsesSentSeparately(t *testing.T) {
 	}
 }
 
+// eventLog records the order of typing and send operations for ordering assertions.
+type eventLog struct {
+	events []string
+}
+
+// orderingSender wraps mockSender and logs to a shared eventLog.
+type orderingSender struct {
+	inner *mockSender
+	log   *eventLog
+}
+
+func (s *orderingSender) Send(ctx context.Context, roomID id.RoomID, resp *orchestrator.Response) error {
+	s.log.events = append(s.log.events, "send:"+resp.CrewID)
+	return s.inner.Send(ctx, roomID, resp)
+}
+
+// orderingTyper wraps mockTyper and logs to a shared eventLog.
+type orderingTyper struct {
+	inner *mockTyper
+	log   *eventLog
+}
+
+func (t *orderingTyper) SetTyping(ctx context.Context, roomID id.RoomID, typing bool, timeout time.Duration) error {
+	if typing {
+		t.log.events = append(t.log.events, "typing:start")
+	} else {
+		t.log.events = append(t.log.events, "typing:stop")
+	}
+	return t.inner.SetTyping(ctx, roomID, typing, timeout)
+}
+
 func TestTypingIndicatorSentBeforeResponse(t *testing.T) {
 	orch := &mockOrch{responses: []orchestrator.Response{{Text: "Aye", CrewID: "maren", Verbosity: "dispatch"}}}
-	sender := &mockSender{}
-	typer := &mockTyper{}
+	log := &eventLog{}
+	sender := &orderingSender{inner: &mockSender{}, log: log}
+	typer := &orderingTyper{inner: &mockTyper{}, log: log}
 	bot := newTestBotWithTyper(t, orch, sender, typer, "@bridge:server")
 
 	bot.handleMessage(t.Context(), textEvent("@captain:server", "!room:server", "hull check"))
 
-	// Typing indicator: at least typing=true (start) and typing=false (cancel).
-	if len(typer.calls) < 2 {
-		t.Fatalf("expected at least 2 typing calls (start+stop), got %d", len(typer.calls))
+	// Verify ordering: typing:start → typing:stop → send:maren
+	if len(log.events) < 3 {
+		t.Fatalf("expected at least 3 events, got %d: %v", len(log.events), log.events)
 	}
-	if !typer.calls[0].typing {
-		t.Error("first typing call should be typing=true")
+	if log.events[0] != "typing:start" {
+		t.Errorf("event[0] = %q, want typing:start", log.events[0])
 	}
-	// Last call should be typing=false (cancel).
-	last := typer.calls[len(typer.calls)-1]
-	if last.typing {
-		t.Error("last typing call should be typing=false")
+	if log.events[1] != "typing:stop" {
+		t.Errorf("event[1] = %q, want typing:stop", log.events[1])
 	}
-	// Response should still be sent.
-	if len(sender.calls) != 1 {
-		t.Fatalf("expected 1 sender call, got %d", len(sender.calls))
+	if log.events[2] != "send:maren" {
+		t.Errorf("event[2] = %q, want send:maren", log.events[2])
 	}
 }
 
@@ -446,7 +475,7 @@ func TestTimeoutSendsGracefulMessage(t *testing.T) {
 		ch <- orchResult{responses, err}
 	}()
 
-	bot.awaitWithTyping(ctx, "!room:server", ch)
+	bot.awaitWithTyping(t.Context(), ctx, "!room:server", ch)
 
 	// Should have sent the timeout message.
 	if len(sender.calls) != 1 {

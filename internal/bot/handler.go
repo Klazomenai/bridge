@@ -55,7 +55,7 @@ func (b *Bot) handleMessage(ctx context.Context, evt *event.Event) {
 		ch <- orchResult{responses, err}
 	}()
 
-	b.awaitWithTyping(handleCtx, evt.RoomID, ch)
+	b.awaitWithTyping(ctx, handleCtx, evt.RoomID, ch)
 }
 
 // orchResult holds the output of an async orchestrator call.
@@ -66,9 +66,11 @@ type orchResult struct {
 
 // awaitWithTyping sends typing indicators while waiting for the orchestrator
 // result, then sends responses or handles errors/timeouts.
-func (b *Bot) awaitWithTyping(ctx context.Context, roomID id.RoomID, ch <-chan orchResult) {
+// sendCtx is the parent (long-lived) context used for sending responses —
+// separate from deadlineCtx so sends are not cut short by the handle timeout.
+func (b *Bot) awaitWithTyping(sendCtx, deadlineCtx context.Context, roomID id.RoomID, ch <-chan orchResult) {
 	// Start typing indicator.
-	if err := b.typer.SetTyping(ctx, roomID, true, typingTimeout); err != nil {
+	if err := b.typer.SetTyping(deadlineCtx, roomID, true, typingTimeout); err != nil {
 		slog.Debug("bot: typing indicator failed", "room", roomID, "err", err)
 	}
 
@@ -79,8 +81,14 @@ func (b *Bot) awaitWithTyping(ctx context.Context, roomID id.RoomID, ch <-chan o
 	for {
 		select {
 		case res := <-ch:
+			// If the deadline fired at the same time, treat as timeout.
+			if deadlineCtx.Err() != nil {
+				b.sendTimeout(sendCtx, roomID)
+				return
+			}
+
 			// Cancel typing indicator.
-			b.cancelTyping(ctx, roomID)
+			b.cancelTyping(sendCtx, roomID)
 
 			if res.err != nil {
 				slog.Error("bot: orchestrator error", "room", roomID, "err", res.err)
@@ -89,7 +97,7 @@ func (b *Bot) awaitWithTyping(ctx context.Context, roomID id.RoomID, ch <-chan o
 
 			for i := range res.responses {
 				resp := &res.responses[i]
-				if err := b.sender.Send(ctx, roomID, resp); err != nil {
+				if err := b.sender.Send(sendCtx, roomID, resp); err != nil {
 					slog.Error("bot: send failed", "room", roomID, "crew", resp.CrewID, "err", err)
 				}
 			}
@@ -97,24 +105,28 @@ func (b *Bot) awaitWithTyping(ctx context.Context, roomID id.RoomID, ch <-chan o
 
 		case <-ticker.C:
 			// Refresh typing indicator.
-			if err := b.typer.SetTyping(ctx, roomID, true, typingTimeout); err != nil {
+			if err := b.typer.SetTyping(deadlineCtx, roomID, true, typingTimeout); err != nil {
 				slog.Debug("bot: typing refresh failed", "room", roomID, "err", err)
 			}
 
-		case <-ctx.Done():
-			// Overall timeout exceeded.
-			b.cancelTyping(context.Background(), roomID)
-			slog.Warn("bot: message handling timed out", "room", roomID)
-			timeoutResp := &orchestrator.Response{
-				Text:      "The crew ran out of time on this one, Captain.",
-				CrewID:    "bridge",
-				Verbosity: "dispatch",
-			}
-			if err := b.sender.Send(context.Background(), roomID, timeoutResp); err != nil {
-				slog.Error("bot: timeout message send failed", "room", roomID, "err", err)
-			}
+		case <-deadlineCtx.Done():
+			b.sendTimeout(sendCtx, roomID)
 			return
 		}
+	}
+}
+
+// sendTimeout cancels typing and sends the timeout message.
+func (b *Bot) sendTimeout(ctx context.Context, roomID id.RoomID) {
+	b.cancelTyping(ctx, roomID)
+	slog.Warn("bot: message handling timed out", "room", roomID)
+	timeoutResp := &orchestrator.Response{
+		Text:      "The crew ran out of time on this one, Captain.",
+		CrewID:    "bridge",
+		Verbosity: "dispatch",
+	}
+	if err := b.sender.Send(ctx, roomID, timeoutResp); err != nil {
+		slog.Error("bot: timeout message send failed", "room", roomID, "err", err)
 	}
 }
 
