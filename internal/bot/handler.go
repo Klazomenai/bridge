@@ -18,8 +18,11 @@ const (
 	// message to the room.
 	handleTimeout = 120 * time.Second
 	// typingTimeout is the duration sent with each typing indicator.
-	// Matrix servers use this as a TTL; we refresh it in a loop.
+	// Matrix servers use this as a TTL; we refresh it before expiry.
 	typingTimeout = 30 * time.Second
+	// typingRefreshInterval is how often we resend the typing indicator.
+	// Must be less than typingTimeout to prevent flicker.
+	typingRefreshInterval = 25 * time.Second
 )
 
 // handleMessage processes a decrypted incoming message event.
@@ -74,16 +77,20 @@ func (b *Bot) awaitWithTyping(sendCtx, deadlineCtx context.Context, roomID id.Ro
 		slog.Debug("bot: typing indicator failed", "room", roomID, "err", err)
 	}
 
-	// Refresh typing every 25s (before the 30s TTL expires).
-	ticker := time.NewTicker(25 * time.Second)
+	// Refresh typing before the TTL expires.
+	ticker := time.NewTicker(typingRefreshInterval)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case res := <-ch:
-			// If the deadline fired at the same time, treat as timeout.
+			// If the deadline fired at the same time, handle accordingly.
 			if deadlineCtx.Err() != nil {
-				b.sendTimeout(sendCtx, roomID)
+				if deadlineCtx.Err() == context.DeadlineExceeded {
+					b.sendTimeout(sendCtx, roomID)
+				} else {
+					b.cancelTyping(sendCtx, roomID)
+				}
 				return
 			}
 
@@ -110,7 +117,11 @@ func (b *Bot) awaitWithTyping(sendCtx, deadlineCtx context.Context, roomID id.Ro
 			}
 
 		case <-deadlineCtx.Done():
-			b.sendTimeout(sendCtx, roomID)
+			if deadlineCtx.Err() == context.DeadlineExceeded {
+				b.sendTimeout(sendCtx, roomID)
+			} else {
+				b.cancelTyping(sendCtx, roomID)
+			}
 			return
 		}
 	}
