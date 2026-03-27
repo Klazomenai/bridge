@@ -48,6 +48,7 @@ type Bot struct {
 	helper *cryptohelper.CryptoHelper
 	orch   OrchestratorI
 	sender Sender
+	typer  Typer
 	cfg    Config
 }
 
@@ -67,6 +68,7 @@ func New(cfg Config, orch OrchestratorI) (*Bot, error) {
 
 	b := &Bot{client: client, orch: orch, cfg: cfg}
 	b.sender = &matrixSender{client: client}
+	b.typer = &matrixTyper{client: client}
 	return b, nil
 }
 
