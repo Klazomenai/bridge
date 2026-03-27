@@ -79,6 +79,11 @@ func NewWithClient(registry *crew.Registry, ctxManager *ctxbuf.Manager, toolReg 
 	}
 }
 
+// SetSandboxConfig overrides the default sandbox configuration. Intended for testing.
+func (o *Orchestrator) SetSandboxConfig(cfg tools.SandboxConfig) {
+	o.sandboxCfg = cfg
+}
+
 // Route selects the crew member for this message.
 // If requestedCrew is non-empty and exists in the registry, it is used.
 // Otherwise the default crew member is returned.

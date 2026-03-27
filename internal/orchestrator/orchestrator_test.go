@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	anthropic "github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
@@ -882,5 +883,74 @@ func TestDelegationToUnknownCrewFallsToDefault(t *testing.T) {
 	// Delegation to unknown falls back to default (maren).
 	if responses[1].CrewID != "maren" {
 		t.Errorf("delegated response crew = %q, want maren (default fallback)", responses[1].CrewID)
+	}
+}
+
+// slowTool sleeps until context is cancelled, simulating a tool that exceeds
+// the sandbox timeout.
+type slowTool struct{}
+
+func (s *slowTool) Name() string        { return "slow_tool" }
+func (s *slowTool) Description() string { return "sleeps forever" }
+func (s *slowTool) InputSchema() anthropic.ToolInputSchemaParam {
+	return anthropic.ToolInputSchemaParam{Properties: map[string]any{}}
+}
+func (s *slowTool) Execute(ctx context.Context, _ json.RawMessage) (string, error) {
+	<-ctx.Done()
+	return "", ctx.Err()
+}
+
+func TestToolUseSandboxTimeoutThroughHandle(t *testing.T) {
+	toolReg := newToolRegistry(&slowTool{})
+
+	crewYAML := `
+default_crew: maren
+crew:
+  maren:
+    name: "Maren"
+    role: "Shipwright"
+    model: "claude-sonnet-4-6"
+    verbosity: dispatch
+    tools: [delegate_to_crew, slow_tool]
+    voice:
+      model: "en_GB-cori-high.onnx"
+      announces_as: "Maren:"
+    system_prompt: "You are Maren. Respond in {verbosity}"
+`
+	f := filepath.Join(t.TempDir(), "crew.yaml")
+	if err := os.WriteFile(f, []byte(crewYAML), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	reg, err := crew.Load(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	mgr := ctxbuf.NewManager(ctxbuf.DefaultMaxTurns)
+	mock := &mockClaudeClient{responses: []*anthropic.Message{
+		toolUseResponse("tu_1", "slow_tool", json.RawMessage(`{}`)),
+		textResponse("Tool timed out, but I recovered."),
+	}}
+	o := orchestrator.NewWithClient(reg, mgr, toolReg, mock)
+	o.SetSandboxConfig(tools.SandboxConfig{Timeout: 50 * time.Millisecond, MaxOutputLen: 4096})
+
+	responses, err := o.Handle(t.Context(), "!room:server", "run slow tool", "maren")
+	if err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	if responses[0].Text != "Tool timed out, but I recovered." {
+		t.Errorf("unexpected text: %q", responses[0].Text)
+	}
+
+	// Verify the tool_result was sent with isError=true and contains timeout.
+	secondCall := mock.calls[1]
+	lastMsg := secondCall.Messages[len(secondCall.Messages)-1]
+	toolResult := lastMsg.Content[0].OfToolResult
+	if toolResult.IsError.Value != true {
+		t.Error("expected isError=true for timed-out tool")
+	}
+	resultText := toolResult.Content[0].OfText.Text
+	if !strings.Contains(resultText, "context deadline exceeded") {
+		t.Errorf("expected 'context deadline exceeded' in result, got: %q", resultText)
 	}
 }
