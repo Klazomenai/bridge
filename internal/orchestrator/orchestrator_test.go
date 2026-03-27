@@ -932,22 +932,42 @@ crew:
 		textResponse("Tool timed out, but I recovered."),
 	}}
 	o := orchestrator.NewWithClient(reg, mgr, toolReg, mock)
-	o.SetSandboxConfig(tools.SandboxConfig{Timeout: 50 * time.Millisecond, MaxOutputLen: 4096})
+	cfg := tools.DefaultSandboxConfig()
+	cfg.Timeout = 50 * time.Millisecond
+	o.SetSandboxConfig(cfg)
 
 	responses, err := o.Handle(t.Context(), "!room:server", "run slow tool", "maren")
 	if err != nil {
 		t.Fatalf("Handle: %v", err)
+	}
+	if len(responses) == 0 {
+		t.Fatal("Handle returned no responses")
 	}
 	if responses[0].Text != "Tool timed out, but I recovered." {
 		t.Errorf("unexpected text: %q", responses[0].Text)
 	}
 
 	// Verify the tool_result was sent with isError=true and contains timeout.
+	if len(mock.calls) < 2 {
+		t.Fatalf("expected at least 2 Claude calls, got %d", len(mock.calls))
+	}
 	secondCall := mock.calls[1]
+	if len(secondCall.Messages) == 0 {
+		t.Fatal("expected at least 1 message in second Claude call")
+	}
 	lastMsg := secondCall.Messages[len(secondCall.Messages)-1]
+	if len(lastMsg.Content) == 0 {
+		t.Fatal("expected at least 1 content block in last message")
+	}
 	toolResult := lastMsg.Content[0].OfToolResult
+	if toolResult == nil {
+		t.Fatal("expected tool_result content in last message")
+	}
 	if toolResult.IsError.Value != true {
 		t.Error("expected isError=true for timed-out tool")
+	}
+	if len(toolResult.Content) == 0 || toolResult.Content[0].OfText == nil {
+		t.Fatal("expected text content in tool_result")
 	}
 	resultText := toolResult.Content[0].OfText.Text
 	if !strings.Contains(resultText, "context deadline exceeded") {

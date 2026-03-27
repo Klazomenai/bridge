@@ -79,7 +79,8 @@ func NewWithClient(registry *crew.Registry, ctxManager *ctxbuf.Manager, toolReg 
 	}
 }
 
-// SetSandboxConfig overrides the default sandbox configuration. Intended for testing.
+// SetSandboxConfig overrides the default sandbox configuration.
+// Must be called before any Handle() calls. Intended for testing.
 func (o *Orchestrator) SetSandboxConfig(cfg tools.SandboxConfig) {
 	o.sandboxCfg = cfg
 }
