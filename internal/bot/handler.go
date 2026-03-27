@@ -23,6 +23,9 @@ const (
 	// typingRefreshInterval is how often we resend the typing indicator.
 	// Must be less than typingTimeout to prevent flicker.
 	typingRefreshInterval = 25 * time.Second
+	// typingCallTimeout is the per-call timeout for typing HTTP requests.
+	// Typing is best-effort — a stalled request must not block response delivery.
+	typingCallTimeout = 3 * time.Second
 )
 
 // handleMessage processes a decrypted incoming message event.
@@ -72,10 +75,8 @@ type orchResult struct {
 // sendCtx is the parent (long-lived) context used for sending responses —
 // separate from deadlineCtx so sends are not cut short by the handle timeout.
 func (b *Bot) awaitWithTyping(sendCtx, deadlineCtx context.Context, roomID id.RoomID, ch <-chan orchResult) {
-	// Start typing indicator.
-	if err := b.typer.SetTyping(deadlineCtx, roomID, true, typingTimeout); err != nil {
-		slog.Debug("bot: typing indicator failed", "room", roomID, "err", err)
-	}
+	// Start typing indicator (best-effort, short timeout).
+	b.setTypingBestEffort(deadlineCtx, roomID, true)
 
 	// Refresh typing before the TTL expires.
 	ticker := time.NewTicker(typingRefreshInterval)
@@ -112,9 +113,7 @@ func (b *Bot) awaitWithTyping(sendCtx, deadlineCtx context.Context, roomID id.Ro
 
 		case <-ticker.C:
 			// Refresh typing indicator.
-			if err := b.typer.SetTyping(deadlineCtx, roomID, true, typingTimeout); err != nil {
-				slog.Debug("bot: typing refresh failed", "room", roomID, "err", err)
-			}
+			b.setTypingBestEffort(deadlineCtx, roomID, true)
 
 		case <-deadlineCtx.Done():
 			if deadlineCtx.Err() == context.DeadlineExceeded {
@@ -141,11 +140,24 @@ func (b *Bot) sendTimeout(ctx context.Context, roomID id.RoomID) {
 	}
 }
 
-// cancelTyping sends a typing=false indicator, ignoring errors.
-func (b *Bot) cancelTyping(ctx context.Context, roomID id.RoomID) {
-	if err := b.typer.SetTyping(ctx, roomID, false, 0); err != nil {
-		slog.Debug("bot: cancel typing failed", "room", roomID, "err", err)
+// setTypingBestEffort sends a typing indicator with a short timeout so a
+// stalled homeserver doesn't block response delivery.
+func (b *Bot) setTypingBestEffort(parent context.Context, roomID id.RoomID, typing bool) {
+	ctx, cancel := context.WithTimeout(parent, typingCallTimeout)
+	defer cancel()
+
+	timeout := typingTimeout
+	if !typing {
+		timeout = 0
 	}
+	if err := b.typer.SetTyping(ctx, roomID, typing, timeout); err != nil {
+		slog.Debug("bot: typing call failed", "room", roomID, "typing", typing, "err", err)
+	}
+}
+
+// cancelTyping sends a typing=false indicator with a short timeout.
+func (b *Bot) cancelTyping(ctx context.Context, roomID id.RoomID) {
+	b.setTypingBestEffort(ctx, roomID, false)
 }
 
 // extractCrewRequest returns the lowercase crew ID if the message routes to a
