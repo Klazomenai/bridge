@@ -4,6 +4,7 @@ package orchestrator
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 
 	anthropic "github.com/anthropics/anthropic-sdk-go"
@@ -21,6 +22,8 @@ const (
 	captainPrefix = "The Captain says: "
 	// maxTokens is the response token budget.
 	maxTokens = 1024
+	// maxDelegationDepth caps crew-to-crew delegation chains to prevent loops.
+	maxDelegationDepth = 2
 )
 
 // Response is what the orchestrator returns after calling Claude.
@@ -91,9 +94,14 @@ func (o *Orchestrator) Route(requestedCrew string) crew.Crew {
 }
 
 // Handle processes a message from roomID, routes it to the appropriate crew member,
-// calls the Anthropic API with session context, and returns the response.
+// calls the Anthropic API with session context, and returns the responses.
+// If a crew member delegates to another, multiple responses are returned.
 // requestedCrew may be empty (use default) or a crew ID.
-func (o *Orchestrator) Handle(ctx context.Context, roomID, userText, requestedCrew string) (*Response, error) {
+func (o *Orchestrator) Handle(ctx context.Context, roomID, userText, requestedCrew string) ([]Response, error) {
+	return o.handleWithDepth(ctx, roomID, userText, requestedCrew, 0)
+}
+
+func (o *Orchestrator) handleWithDepth(ctx context.Context, roomID, userText, requestedCrew string, depth int) ([]Response, error) {
 	c := o.Route(requestedCrew)
 
 	framed := frameMessage(userText)
@@ -106,7 +114,8 @@ func (o *Orchestrator) Handle(ctx context.Context, roomID, userText, requestedCr
 
 	slog.Info("orchestrator: calling claude",
 		"crew", c.Name(), "room", roomID,
-		"history_turns", len(history)/2, "model", c.Model())
+		"history_turns", len(history)/2, "model", c.Model(),
+		"delegation_depth", depth)
 
 	result, err := o.runToolLoop(ctx, c, roomID, messages)
 	if err != nil {
@@ -118,7 +127,43 @@ func (o *Orchestrator) Handle(ctx context.Context, roomID, userText, requestedCr
 	for _, turn := range result.turns {
 		buf.Add(turn)
 	}
-	buf.Add(anthropic.NewAssistantMessage(anthropic.NewTextBlock(result.text)))
+	if result.text != "" && result.delegation == nil {
+		buf.Add(anthropic.NewAssistantMessage(anthropic.NewTextBlock(result.text)))
+	}
 
-	return buildResponse(c, result.text), nil
+	var responses []Response
+	if result.text != "" {
+		responses = append(responses, *buildResponse(c, result.text))
+	}
+
+	// If the crew member delegated, recursively handle the delegated crew.
+	if result.delegation != nil && depth < maxDelegationDepth {
+		delegateText := fmt.Sprintf("[%s delegates]: %s", c.Name(), result.delegation.context)
+		slog.Info("orchestrator: following delegation",
+			"from", c.ID(), "to", result.delegation.crewID,
+			"room", roomID, "depth", depth+1)
+		more, err := o.handleWithDepth(ctx, roomID, delegateText, result.delegation.crewID, depth+1)
+		if err != nil {
+			slog.Warn("orchestrator: delegation failed, returning partial responses",
+				"to", result.delegation.crewID, "err", err)
+			return responses, nil
+		}
+		responses = append(responses, more...)
+	} else if result.delegation != nil {
+		slog.Warn("orchestrator: delegation depth exceeded",
+			"from", c.ID(), "to", result.delegation.crewID,
+			"depth", depth, "max", maxDelegationDepth)
+		// If the crew delegated with no text, the user would receive nothing.
+		// Add an explanation so the delegation limit is visible.
+		if len(responses) == 0 {
+			responses = append(responses, Response{
+				Text:       fmt.Sprintf("[delegation to %s not followed — depth limit reached]", result.delegation.crewID),
+				CrewID:     c.ID(),
+				CrewMember: c.Name(),
+				Verbosity:  c.Verbosity(),
+			})
+		}
+	}
+
+	return responses, nil
 }

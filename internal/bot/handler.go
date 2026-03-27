@@ -31,14 +31,17 @@ func (b *Bot) handleMessage(ctx context.Context, evt *event.Event) {
 		"room", evt.RoomID, "sender", evt.Sender,
 		"crew_request", requestedCrew)
 
-	resp, err := b.orch.Handle(ctx, string(evt.RoomID), text, requestedCrew)
+	responses, err := b.orch.Handle(ctx, string(evt.RoomID), text, requestedCrew)
 	if err != nil {
 		slog.Error("bot: orchestrator error", "err", err)
 		return
 	}
 
-	if err := b.sender.Send(ctx, evt.RoomID, resp); err != nil {
-		slog.Error("bot: send failed", "room", evt.RoomID, "err", err)
+	for i := range responses {
+		resp := &responses[i]
+		if err := b.sender.Send(ctx, evt.RoomID, resp); err != nil {
+			slog.Error("bot: send failed", "room", evt.RoomID, "crew", resp.CrewID, "err", err)
+		}
 	}
 }
 

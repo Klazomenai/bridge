@@ -39,6 +39,7 @@ func main() {
 
 	// --- Tool registry ---
 	toolReg := tools.NewRegistry()
+	toolReg.Register(&tools.DelegateTool{})
 
 	// --- Crest email tools ---
 	// Registered as stubs when IMAP/SMTP is not configured so crew.yaml

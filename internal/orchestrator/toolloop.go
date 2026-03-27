@@ -17,6 +17,12 @@ const (
 	maxToolIterations = 5
 )
 
+// delegationRequest is set when a crew member invokes delegate_to_crew.
+type delegationRequest struct {
+	crewID  string
+	context string
+}
+
 // loopResult holds the output of a tool-use loop.
 type loopResult struct {
 	// text is the final assistant text after all tool-use rounds complete.
@@ -24,6 +30,8 @@ type loopResult struct {
 	// turns collects all intermediate messages (assistant tool_use + user tool_result)
 	// for storage in the context buffer.
 	turns []anthropic.MessageParam
+	// delegation is non-nil if the crew member wants to hand off to another crew.
+	delegation *delegationRequest
 }
 
 // runToolLoop calls the Claude API with the crew's tools. If Claude responds
@@ -61,7 +69,8 @@ func (o *Orchestrator) runToolLoop(ctx context.Context, c crew.Crew, roomID stri
 
 		// Claude wants to use tools — execute each one and collect results.
 		allowedTools := c.Tools()
-		toolResults := o.executeToolCalls(ctx, resp.Content, allowedTools, c.ID(), roomID)
+		var delegation *delegationRequest
+		toolResults := o.executeToolCalls(ctx, resp.Content, allowedTools, c.ID(), roomID, &delegation)
 
 		// Build the assistant message preserving text and tool_use blocks.
 		assistantBlocks := make([]anthropic.ContentBlockParamUnion, 0, len(resp.Content))
@@ -85,6 +94,13 @@ func (o *Orchestrator) runToolLoop(ctx context.Context, c crew.Crew, roomID stri
 		slog.Info("orchestrator: tool-use round complete",
 			"iteration", i+1, "tool_results", len(toolResults),
 			"crew", c.Name())
+
+		// If a delegation was requested, extract any text from this response
+		// and break out so Handle() can start the delegated crew.
+		if delegation != nil {
+			text := extractText(resp)
+			return &loopResult{text: text, turns: turns, delegation: delegation}, nil
+		}
 	}
 
 	return nil, fmt.Errorf("tool-use loop exceeded %d iterations", maxToolIterations)
@@ -92,7 +108,9 @@ func (o *Orchestrator) runToolLoop(ctx context.Context, c crew.Crew, roomID stri
 
 // executeToolCalls runs each tool_use block and returns tool_result blocks.
 // allowedTools is the crew member's declared tool allowlist for defense in depth.
-func (o *Orchestrator) executeToolCalls(ctx context.Context, content []anthropic.ContentBlockUnion, allowedTools []string, crewID, roomID string) []anthropic.ContentBlockParamUnion {
+// If a delegate_to_crew tool is invoked, *delegation is set and remaining tools
+// are skipped.
+func (o *Orchestrator) executeToolCalls(ctx context.Context, content []anthropic.ContentBlockUnion, allowedTools []string, crewID, roomID string, delegation **delegationRequest) []anthropic.ContentBlockParamUnion {
 	allowed := make(map[string]bool, len(allowedTools))
 	for _, t := range allowedTools {
 		allowed[t] = true
@@ -127,6 +145,19 @@ func (o *Orchestrator) executeToolCalls(ctx context.Context, content []anthropic
 
 		meta := tools.SandboxMeta{CrewID: crewID, RoomID: roomID, ToolName: block.Name}
 		result, isError := tools.ExecuteWithSandbox(ctx, tool, block.Input, o.sandboxCfg, meta)
+
+		// Detect delegation sentinel — only from the delegate_to_crew tool.
+		if !isError && block.Name == tools.DelegateToolName {
+			if targetCrew, delegateCtx, ok := tools.ParseDelegation(result); ok {
+				slog.Info("orchestrator: delegation requested",
+					"from", crewID, "to", targetCrew, "room", roomID)
+				*delegation = &delegationRequest{crewID: targetCrew, context: delegateCtx}
+				results = append(results, anthropic.NewToolResultBlock(
+					block.ID, fmt.Sprintf("Delegating to %s.", targetCrew), false))
+				return results // skip remaining tools
+			}
+		}
+
 		results = append(results, anthropic.NewToolResultBlock(block.ID, result, isError))
 	}
 

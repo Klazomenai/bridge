@@ -27,7 +27,7 @@ crew:
     role: "Shipwright"
     model: "claude-sonnet-4-6"
     verbosity: dispatch
-    tools: []
+    tools: [delegate_to_crew]
     voice:
       model: "en_GB-cori-high.onnx"
       announces_as: "Maren:"
@@ -37,7 +37,7 @@ crew:
     role: "Signalman"
     model: "claude-sonnet-4-6"
     verbosity: dispatch
-    tools: [echo_tool]
+    tools: [delegate_to_crew, echo_tool]
     voice:
       model: "en_US-lessac-high.onnx"
       announces_as: "Crest:"
@@ -167,6 +167,8 @@ func newTestRegistry(t *testing.T) *crew.Registry {
 
 func newToolRegistry(tt ...tools.ToolDefinition) *tools.Registry {
 	reg := tools.NewRegistry()
+	// delegate_to_crew is always registered (available to all crew).
+	reg.Register(&tools.DelegateTool{})
 	for _, t := range tt {
 		reg.Register(t)
 	}
@@ -232,12 +234,15 @@ func TestHandoffRequestRoutesCorrectly(t *testing.T) {
 
 func TestHandleCallsClaude(t *testing.T) {
 	o, mock := newTestOrchestrator(t, newToolRegistry())
-	resp, err := o.Handle(t.Context(), "!room:server", "hull check", "")
+	responses, err := o.Handle(t.Context(), "!room:server", "hull check", "")
 	if err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
-	if resp.Text != "Aye, that'll hold." {
-		t.Errorf("unexpected response text: %q", resp.Text)
+	if len(responses) != 1 {
+		t.Fatalf("expected 1 response, got %d", len(responses))
+	}
+	if responses[0].Text != "Aye, that'll hold." {
+		t.Errorf("unexpected response text: %q", responses[0].Text)
 	}
 	if len(mock.calls) != 1 {
 		t.Fatalf("expected 1 API call, got %d", len(mock.calls))
@@ -313,12 +318,12 @@ func TestHandleErrorsOnEmptyTextResponse(t *testing.T) {
 
 func TestHandleRoutesToCrestWhenRequested(t *testing.T) {
 	o, mock := newTestOrchestrator(t, newToolRegistry())
-	resp, err := o.Handle(t.Context(), "!room:server", "check inbox", "crest")
+	responses, err := o.Handle(t.Context(), "!room:server", "check inbox", "crest")
 	if err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
-	if resp.CrewID != "crest" {
-		t.Errorf("expected crew crest, got %s", resp.CrewID)
+	if responses[0].CrewID != "crest" {
+		t.Errorf("expected crew crest, got %s", responses[0].CrewID)
 	}
 	call := mock.calls[0]
 	if !strings.Contains(call.System[0].Text, "Crest") {
@@ -339,12 +344,12 @@ func TestToolUseSingleRoundTrip(t *testing.T) {
 		textResponse("Echo says: ping"),
 	)
 
-	resp, err := o.Handle(t.Context(), "!room:server", "test echo", "crest")
+	responses, err := o.Handle(t.Context(), "!room:server", "test echo", "crest")
 	if err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
-	if resp.Text != "Echo says: ping" {
-		t.Errorf("unexpected text: %q", resp.Text)
+	if responses[0].Text != "Echo says: ping" {
+		t.Errorf("unexpected text: %q", responses[0].Text)
 	}
 	if len(mock.calls) != 2 {
 		t.Fatalf("expected 2 API calls, got %d", len(mock.calls))
@@ -372,12 +377,12 @@ func TestToolUseMultipleRoundTrips(t *testing.T) {
 		textResponse("Done with both."),
 	)
 
-	resp, err := o.Handle(t.Context(), "!room:server", "test", "crest")
+	responses, err := o.Handle(t.Context(), "!room:server", "test", "crest")
 	if err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
-	if resp.Text != "Done with both." {
-		t.Errorf("unexpected text: %q", resp.Text)
+	if responses[0].Text != "Done with both." {
+		t.Errorf("unexpected text: %q", responses[0].Text)
 	}
 	if len(mock.calls) != 3 {
 		t.Fatalf("expected 3 API calls (1 initial + 2 tool rounds), got %d", len(mock.calls))
@@ -404,12 +409,12 @@ func TestToolUseMultipleToolsInOneResponse(t *testing.T) {
 		textResponse("Got both echoes."),
 	)
 
-	resp, err := o.Handle(t.Context(), "!room:server", "test", "crest")
+	responses, err := o.Handle(t.Context(), "!room:server", "test", "crest")
 	if err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
-	if resp.Text != "Got both echoes." {
-		t.Errorf("unexpected text: %q", resp.Text)
+	if responses[0].Text != "Got both echoes." {
+		t.Errorf("unexpected text: %q", responses[0].Text)
 	}
 	if len(mock.calls) != 2 {
 		t.Fatalf("expected 2 API calls, got %d", len(mock.calls))
@@ -457,12 +462,12 @@ crew:
 	}}
 	o := orchestrator.NewWithClient(reg, mgr, toolReg, mock)
 
-	resp, err := o.Handle(t.Context(), "!room:server", "break it", "maren")
+	responses, err := o.Handle(t.Context(), "!room:server", "break it", "maren")
 	if err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
-	if resp.Text != "Tool failed, but I handled it." {
-		t.Errorf("unexpected text: %q", resp.Text)
+	if responses[0].Text != "Tool failed, but I handled it." {
+		t.Errorf("unexpected text: %q", responses[0].Text)
 	}
 
 	// Verify the tool_result was sent with isError=true.
@@ -510,12 +515,12 @@ crew:
 	}}
 	o := orchestrator.NewWithClient(reg, mgr, toolReg, mock)
 
-	resp, err := o.Handle(t.Context(), "!room:server", "test", "maren")
+	responses, err := o.Handle(t.Context(), "!room:server", "test", "maren")
 	if err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
-	if resp.Text != "That tool doesn't exist." {
-		t.Errorf("unexpected text: %q", resp.Text)
+	if responses[0].Text != "That tool doesn't exist." {
+		t.Errorf("unexpected text: %q", responses[0].Text)
 	}
 
 	// Verify isError=true with "unknown tool" message from Registry.Execute.
@@ -541,12 +546,12 @@ func TestToolUseCrewAllowlistEnforced(t *testing.T) {
 		textResponse("Tool not allowed."),
 	)
 
-	resp, err := o.Handle(t.Context(), "!room:server", "try fail_tool", "crest")
+	responses, err := o.Handle(t.Context(), "!room:server", "try fail_tool", "crest")
 	if err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
-	if resp.Text != "Tool not allowed." {
-		t.Errorf("unexpected text: %q", resp.Text)
+	if responses[0].Text != "Tool not allowed." {
+		t.Errorf("unexpected text: %q", responses[0].Text)
 	}
 
 	// Verify isError=true with "not allowed" message.
@@ -612,12 +617,12 @@ crew:
 	}}
 	o := orchestrator.NewWithClient(reg, mgr, toolReg, mock)
 
-	resp, err := o.Handle(t.Context(), "!room:server", "big output", "maren")
+	responses, err := o.Handle(t.Context(), "!room:server", "big output", "maren")
 	if err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
-	if resp.Text != "Got truncated output." {
-		t.Errorf("unexpected text: %q", resp.Text)
+	if responses[0].Text != "Got truncated output." {
+		t.Errorf("unexpected text: %q", responses[0].Text)
 	}
 
 	// Verify the tool result was truncated.
@@ -645,11 +650,18 @@ func TestToolUseToolsPassedToClaudeAPI(t *testing.T) {
 	}
 
 	call := mock.calls[0]
-	if len(call.Tools) != 1 {
-		t.Fatalf("expected 1 tool passed to Claude, got %d", len(call.Tools))
+	if len(call.Tools) != 2 {
+		t.Fatalf("expected 2 tools passed to Claude (delegate_to_crew + echo_tool), got %d", len(call.Tools))
 	}
-	if call.Tools[0].OfTool.Name != "echo_tool" {
-		t.Errorf("expected echo_tool, got %q", call.Tools[0].OfTool.Name)
+	toolNames := make(map[string]bool)
+	for _, tool := range call.Tools {
+		toolNames[tool.OfTool.Name] = true
+	}
+	if !toolNames["echo_tool"] {
+		t.Error("expected echo_tool in tools")
+	}
+	if !toolNames["delegate_to_crew"] {
+		t.Error("expected delegate_to_crew in tools")
 	}
 }
 
@@ -664,8 +676,12 @@ func TestToolUseNoToolsForCrewWithoutTools(t *testing.T) {
 	}
 
 	call := mock.calls[0]
-	if len(call.Tools) != 0 {
-		t.Errorf("expected 0 tools for maren, got %d", len(call.Tools))
+	// Maren has tools: [delegate_to_crew] — only the delegation tool.
+	if len(call.Tools) != 1 {
+		t.Fatalf("expected 1 tool (delegate_to_crew) for maren, got %d", len(call.Tools))
+	}
+	if call.Tools[0].OfTool.Name != "delegate_to_crew" {
+		t.Errorf("expected delegate_to_crew, got %q", call.Tools[0].OfTool.Name)
 	}
 }
 
@@ -706,12 +722,12 @@ func TestToolUseTextAndToolUseInSameResponse(t *testing.T) {
 		textResponse("All done."),
 	)
 
-	resp, err := o.Handle(t.Context(), "!room:server", "test", "crest")
+	responses, err := o.Handle(t.Context(), "!room:server", "test", "crest")
 	if err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
-	if resp.Text != "All done." {
-		t.Errorf("unexpected text: %q", resp.Text)
+	if responses[0].Text != "All done." {
+		t.Errorf("unexpected text: %q", responses[0].Text)
 	}
 	if len(mock.calls) != 2 {
 		t.Fatalf("expected 2 API calls, got %d", len(mock.calls))
@@ -767,4 +783,104 @@ func (a *apiFailOnCallN) New(ctx context.Context, body anthropic.MessageNewParam
 	}
 	a.count++
 	return a.inner.New(ctx, body, opts...)
+}
+
+// =====================================================================
+// Delegation tests
+// =====================================================================
+
+func TestDelegationHappyPath(t *testing.T) {
+	toolReg := newToolRegistry(&echoTool{})
+
+	// Maren uses delegate_to_crew → Crest responds.
+	delegateInput := json.RawMessage(`{"crew":"crest","context":"Check the inbox"}`)
+	o, _ := newTestOrchestrator(t, toolReg,
+		// Maren's response: text + delegate tool use
+		toolUseWithTextResponse("Aye, hull's sound. But Crest should check signals.",
+			"tu_1", "delegate_to_crew", delegateInput),
+		// Crest's response (second Handle call):
+		textResponse("Signal received. Checking the inbox now."),
+	)
+
+	responses, err := o.Handle(t.Context(), "!room:server", "status report", "maren")
+	if err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	if len(responses) != 2 {
+		t.Fatalf("expected 2 responses (maren + crest), got %d", len(responses))
+	}
+	if responses[0].CrewID != "maren" {
+		t.Errorf("first response crew = %q, want maren", responses[0].CrewID)
+	}
+	if responses[0].Text != "Aye, hull's sound. But Crest should check signals." {
+		t.Errorf("first response text = %q", responses[0].Text)
+	}
+	if responses[1].CrewID != "crest" {
+		t.Errorf("second response crew = %q, want crest", responses[1].CrewID)
+	}
+	if responses[1].Text != "Signal received. Checking the inbox now." {
+		t.Errorf("second response text = %q", responses[1].Text)
+	}
+}
+
+func TestDelegationMaxDepthExceeded(t *testing.T) {
+	toolReg := newToolRegistry(&echoTool{})
+
+	// A→B→C: three delegations, but max depth is 2 so C's delegation is ignored.
+	delegateToCrest := json.RawMessage(`{"crew":"crest","context":"Your turn"}`)
+	delegateToMaren := json.RawMessage(`{"crew":"maren","context":"Back to you"}`)
+
+	o, _ := newTestOrchestrator(t, toolReg,
+		// depth 0: Maren delegates to Crest
+		toolUseWithTextResponse("Maren says hi.",
+			"tu_1", "delegate_to_crew", delegateToCrest),
+		// depth 1: Crest delegates to Maren
+		toolUseWithTextResponse("Crest says hi.",
+			"tu_2", "delegate_to_crew", delegateToMaren),
+		// depth 2: Maren tries to delegate again — should be ignored (at max depth)
+		toolUseWithTextResponse("Maren again.",
+			"tu_3", "delegate_to_crew", delegateToCrest),
+	)
+
+	responses, err := o.Handle(t.Context(), "!room:server", "ping pong", "maren")
+	if err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	// depth 0: Maren, depth 1: Crest, depth 2: Maren (stops here, no further delegation)
+	if len(responses) != 3 {
+		t.Fatalf("expected 3 responses (depth 0,1,2), got %d", len(responses))
+	}
+	if responses[0].CrewID != "maren" {
+		t.Errorf("response[0] crew = %q, want maren", responses[0].CrewID)
+	}
+	if responses[1].CrewID != "crest" {
+		t.Errorf("response[1] crew = %q, want crest", responses[1].CrewID)
+	}
+	if responses[2].CrewID != "maren" {
+		t.Errorf("response[2] crew = %q, want maren", responses[2].CrewID)
+	}
+}
+
+func TestDelegationToUnknownCrewFallsToDefault(t *testing.T) {
+	toolReg := newToolRegistry()
+
+	// Maren delegates to "ghost" — unknown crew falls back to default (maren).
+	delegateInput := json.RawMessage(`{"crew":"ghost","context":"Who are you?"}`)
+	o, _ := newTestOrchestrator(t, toolReg,
+		toolUseWithTextResponse("Let me ask ghost.",
+			"tu_1", "delegate_to_crew", delegateInput),
+		textResponse("I'm the default, maren."),
+	)
+
+	responses, err := o.Handle(t.Context(), "!room:server", "test", "maren")
+	if err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	if len(responses) != 2 {
+		t.Fatalf("expected 2 responses, got %d", len(responses))
+	}
+	// Delegation to unknown falls back to default (maren).
+	if responses[1].CrewID != "maren" {
+		t.Errorf("delegated response crew = %q, want maren (default fallback)", responses[1].CrewID)
+	}
 }
