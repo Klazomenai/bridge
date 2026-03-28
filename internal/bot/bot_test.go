@@ -193,6 +193,30 @@ func TestExtractCrewRequestWordBoundary(t *testing.T) {
 	}
 }
 
+func TestExtractCrewRequestBosun(t *testing.T) {
+	crew := []string{"maren", "crest", "bosun", "lookout"}
+	got := extractCrewRequest("over to bosun", crew)
+	if got != "bosun" {
+		t.Errorf("expected bosun, got %q", got)
+	}
+}
+
+func TestExtractCrewRequestLookoutComma(t *testing.T) {
+	crew := []string{"maren", "crest", "bosun", "lookout"}
+	got := extractCrewRequest("lookout, status report", crew)
+	if got != "lookout" {
+		t.Errorf("expected lookout, got %q", got)
+	}
+}
+
+func TestExtractCrewRequestLookoutColon(t *testing.T) {
+	crew := []string{"maren", "crest", "bosun", "lookout"}
+	got := extractCrewRequest("lookout: check the metrics", crew)
+	if got != "lookout" {
+		t.Errorf("expected lookout, got %q", got)
+	}
+}
+
 // --- handleMessage tests using mocks ---
 
 // mockOrch is a test double for OrchestratorI.
@@ -254,7 +278,7 @@ func newTestBotWithTyper(t *testing.T, orch OrchestratorI, sender Sender, typer 
 		typer:  typer,
 		cfg: Config{
 			Username:  string(selfUserID),
-			KnownCrew: []string{"maren", "crest"},
+			KnownCrew: []string{"maren", "crest", "bosun", "lookout"},
 		},
 	}
 }
