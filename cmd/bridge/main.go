@@ -7,6 +7,7 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"os/exec"
 	"os/signal"
 	"strings"
 	"syscall"
@@ -19,6 +20,7 @@ import (
 	"klazomenai/bridge/internal/orchestrator"
 	"klazomenai/bridge/internal/tools"
 	cresttools "klazomenai/bridge/internal/tools/crest"
+	marentools "klazomenai/bridge/internal/tools/maren"
 )
 
 func main() {
@@ -83,9 +85,21 @@ func main() {
 		slog.Info("crest: email tools registered as stubs (CREST_IMAP_HOST not set)")
 	}
 
-	// --- Bosun tools ---
-	toolReg.Register(tools.NewStubTool("kubectl_get", "Get Kubernetes resources (not configured)"))
-	slog.Info("bosun: tools registered as stubs")
+	// --- Maren / Bosun tools (shared: kubectl_get, helm_status) ---
+	if hasExec("kubectl") {
+		toolReg.Register(marentools.NewKubectlGetTool(defaultExecFn))
+		slog.Info("maren: kubectl_get registered")
+	} else {
+		toolReg.Register(tools.NewStubTool("kubectl_get", "Get Kubernetes resources (kubectl not available)"))
+		slog.Info("maren: kubectl_get registered as stub (binary not found)")
+	}
+	if hasExec("helm") {
+		toolReg.Register(marentools.NewHelmStatusTool(defaultExecFn))
+		slog.Info("maren: helm_status registered")
+	} else {
+		toolReg.Register(tools.NewStubTool("helm_status", "Get Helm release status (helm not available)"))
+		slog.Info("maren: helm_status registered as stub (binary not found)")
+	}
 
 	// --- Lookout tools ---
 	toolReg.Register(tools.NewStubTool("prometheus_query", "Query Prometheus metrics (not configured)"))
@@ -175,4 +189,15 @@ func mustEnv(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// hasExec reports whether a binary is available on PATH.
+func hasExec(name string) bool {
+	_, err := exec.LookPath(name)
+	return err == nil
+}
+
+// defaultExecFn is the production ExecFn that runs commands via os/exec.
+func defaultExecFn(ctx context.Context, name string, args ...string) ([]byte, error) {
+	return exec.CommandContext(ctx, name, args...).CombinedOutput()
 }
