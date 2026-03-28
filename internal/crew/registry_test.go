@@ -48,6 +48,15 @@ crew:
       model: "en_US-amy-medium.onnx"
       announces_as: "Lookout:"
     system_prompt: "You are the Lookout. Respond in {verbosity}"
+  chips:
+    name: "Chips"
+    role: "The Carpenter"
+    model: "claude-sonnet-4-6"
+    verbosity: log-entry
+    voice:
+      model: TBD
+      announces_as: "Chips:"
+    system_prompt: "You are Chips. Respond in {verbosity}"
 `
 
 func writeRegistry(t *testing.T, content string) string {
@@ -338,14 +347,14 @@ func TestRegistryIDs(t *testing.T) {
 		t.Fatalf("Load: %v", err)
 	}
 	ids := r.IDs()
-	if len(ids) != 4 {
-		t.Fatalf("expected 4 crew IDs, got %d: %v", len(ids), ids)
+	if len(ids) != 5 {
+		t.Fatalf("expected 5 crew IDs, got %d: %v", len(ids), ids)
 	}
 	seen := make(map[string]bool)
 	for _, id := range ids {
 		seen[id] = true
 	}
-	for _, want := range []string{"maren", "crest", "bosun", "lookout"} {
+	for _, want := range []string{"maren", "crest", "bosun", "lookout", "chips"} {
 		if !seen[want] {
 			t.Errorf("expected ID %q in IDs(), got %v", want, ids)
 		}
@@ -473,6 +482,16 @@ crew:
       model: "en_US-amy-medium.onnx"
       announces_as: "Lookout:"
     system_prompt: "You are the Lookout. Respond in {verbosity}"
+  chips:
+    name: "Chips"
+    role: "The Carpenter"
+    model: "claude-sonnet-4-6"
+    verbosity: log-entry
+    tools: [gh_issue_list, gh_issue_view, gh_pr_list, gh_pr_view, gh_pr_checks, git_log, git_diff]
+    voice:
+      model: TBD
+      announces_as: "Chips:"
+    system_prompt: "You are Chips. Respond in {verbosity}"
 `
 
 func TestToolsParsedFromYAML(t *testing.T) {
@@ -528,6 +547,13 @@ func TestValidateToolsAllPresent(t *testing.T) {
 		"imap_poll":        true,
 		"prometheus_query": true,
 		"loki_query":       true,
+		"gh_issue_list":    true,
+		"gh_issue_view":    true,
+		"gh_pr_list":       true,
+		"gh_pr_view":       true,
+		"gh_pr_checks":     true,
+		"git_log":          true,
+		"git_diff":         true,
 	}}
 	if err := r.ValidateTools(checker); err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -568,5 +594,40 @@ func TestValidateToolsNoToolsDeclared(t *testing.T) {
 	checker := &stubChecker{known: map[string]bool{}}
 	if err := r.ValidateTools(checker); err != nil {
 		t.Fatalf("expected no error when no tools declared, got: %v", err)
+	}
+}
+
+// TestRealCrewYAMLLoadsAndValidates loads the repository's config/crew.yaml
+// and validates all declared tools against the known registration set. This
+// catches config/registration drift that synthetic test YAML would miss.
+func TestRealCrewYAMLLoadsAndValidates(t *testing.T) {
+	const configPath = "../../config/crew.yaml"
+	if _, err := os.Stat(configPath); err != nil {
+		t.Skipf("config/crew.yaml not found at %s (running outside repo?)", configPath)
+	}
+
+	r, err := crew.Load(configPath)
+	if err != nil {
+		t.Fatalf("Load real crew.yaml: %v", err)
+	}
+
+	// All tool names that main.go registers (real or stub).
+	allTools := &stubChecker{known: map[string]bool{
+		"delegate_to_crew":  true,
+		"imap_poll":         true,
+		"smtp_send":         true,
+		"kubectl_get":       true,
+		"prometheus_query":  true,
+		"loki_query":        true,
+		"gh_issue_list":     true,
+		"gh_issue_view":     true,
+		"gh_pr_list":        true,
+		"gh_pr_view":        true,
+		"gh_pr_checks":      true,
+		"git_log":           true,
+		"git_diff":          true,
+	}}
+	if err := r.ValidateTools(allTools); err != nil {
+		t.Fatalf("real crew.yaml tool validation failed: %v", err)
 	}
 }

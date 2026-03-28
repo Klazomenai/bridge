@@ -217,6 +217,56 @@ func TestExtractCrewRequestLookoutColon(t *testing.T) {
 	}
 }
 
+func TestExtractCrewRequestMultipleOverToPicksEarliest(t *testing.T) {
+	crew := []string{"maren", "crest", "bosun", "lookout", "chips"}
+
+	msgCrestFirst := "over to crest for comms, then over to chips for the PR"
+	got := extractCrewRequest(msgCrestFirst, crew)
+	if got != "crest" {
+		t.Errorf("expected crest (earliest match), got %q", got)
+	}
+
+	// Reverse scenario: chips appears first.
+	msgChipsFirst := "over to chips first, then over to bosun"
+	got = extractCrewRequest(msgChipsFirst, crew)
+	if got != "chips" {
+		t.Errorf("expected chips (earliest match), got %q", got)
+	}
+
+	// Verify that changing the known crew slice order does not affect routing.
+	// Reverse the crew slice to simulate non-deterministic map iteration order.
+	reversed := make([]string, len(crew))
+	for i := range crew {
+		reversed[i] = crew[len(crew)-1-i]
+	}
+
+	got = extractCrewRequest(msgCrestFirst, reversed)
+	if got != "crest" {
+		t.Errorf("with reversed crew slice, expected crest (earliest match), got %q", got)
+	}
+
+	got = extractCrewRequest(msgChipsFirst, reversed)
+	if got != "chips" {
+		t.Errorf("with reversed crew slice, expected chips (earliest match), got %q", got)
+	}
+}
+
+func TestExtractCrewRequestChipsOverTo(t *testing.T) {
+	crew := []string{"maren", "crest", "bosun", "lookout", "chips"}
+	got := extractCrewRequest("over to chips", crew)
+	if got != "chips" {
+		t.Errorf("expected chips, got %q", got)
+	}
+}
+
+func TestExtractCrewRequestChipsComma(t *testing.T) {
+	crew := []string{"maren", "crest", "bosun", "lookout", "chips"}
+	got := extractCrewRequest("chips, check the PR", crew)
+	if got != "chips" {
+		t.Errorf("expected chips, got %q", got)
+	}
+}
+
 // --- handleMessage tests using mocks ---
 
 // mockOrch is a test double for OrchestratorI.
@@ -278,7 +328,7 @@ func newTestBotWithTyper(t *testing.T, orch OrchestratorI, sender Sender, typer 
 		typer:  typer,
 		cfg: Config{
 			Username:  string(selfUserID),
-			KnownCrew: []string{"maren", "crest", "bosun", "lookout"},
+			KnownCrew: []string{"maren", "crest", "bosun", "lookout", "chips"},
 		},
 	}
 }
