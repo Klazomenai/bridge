@@ -57,9 +57,14 @@ func (t *HelmStatusTool) Execute(ctx context.Context, input json.RawMessage) (st
 		return "", fmt.Errorf("invalid release: must not start with '-'")
 	}
 
+	namespace := strings.TrimSpace(params.Namespace)
+	if namespace != "" && strings.HasPrefix(namespace, "-") {
+		return "", fmt.Errorf("invalid namespace: must not start with '-'")
+	}
+
 	args := []string{"status", release, "-o", "json"}
-	if params.Namespace != "" {
-		args = append(args, "-n", params.Namespace)
+	if namespace != "" {
+		args = append(args, "-n", namespace)
 	}
 
 	out, err := t.execFn(ctx, "helm", args...)

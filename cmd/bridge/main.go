@@ -198,6 +198,8 @@ func hasExec(name string) bool {
 }
 
 // defaultExecFn is the production ExecFn that runs commands via os/exec.
+// Uses Output() (stdout only) so stderr warnings don't corrupt JSON output
+// that sanitiseOutput needs to parse for structured redaction.
 func defaultExecFn(ctx context.Context, name string, args ...string) ([]byte, error) {
-	return exec.CommandContext(ctx, name, args...).CombinedOutput()
+	return exec.CommandContext(ctx, name, args...).Output()
 }

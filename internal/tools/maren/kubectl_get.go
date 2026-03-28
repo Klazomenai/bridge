@@ -65,7 +65,7 @@ func (t *KubectlGetTool) InputSchema() anthropic.ToolInputSchemaParam {
 			},
 			"namespace": map[string]any{
 				"type":        "string",
-				"description": "Namespace to query (omit for cluster-scoped or all namespaces)",
+				"description": "Namespace to query (omit to use the current-context namespace; cluster-scoped resources ignore this)",
 			},
 			"name": map[string]any{
 				"type":        "string",
@@ -127,33 +127,55 @@ var sensitiveKeys = map[string]bool{
 	"token":    true,
 	"password": true,
 	"secret":   true,
-	"data":     true,
 }
 
 // sensitiveLinePatterns are key names that trigger line removal in plain-text
 // output. Matched as whole words to avoid false positives (e.g. "metadata:"
 // must not match "data:").
-var sensitiveLinePatterns = []string{"token:", "password:", "secret:", "data:"}
+var sensitiveLinePatterns = []string{"token:", "password:", "secret:"}
 
-// sanitiseOutput redacts sensitive fields from tool output. If the output is
-// valid JSON, it performs structured redaction (preserving valid JSON). Otherwise
-// it falls back to line-based filtering for plain-text kubectl output.
+// sanitiseOutput redacts sensitive fields from tool output. If the output
+// contains a JSON object or array, it performs structured redaction (preserving
+// valid JSON). Otherwise it falls back to line-based filtering for plain-text
+// kubectl output.
 func sanitiseOutput(output string) string {
-	trimmed := strings.TrimSpace(output)
-	if len(trimmed) > 0 && (trimmed[0] == '{' || trimmed[0] == '[') {
+	// Try to locate and parse JSON within the output. stderr warnings may
+	// precede the JSON body, so search for the first '{' or '['.
+	if jsonStart := findJSONStart(output); jsonStart >= 0 {
+		prefix := output[:jsonStart]
+		jsonPart := output[jsonStart:]
 		var parsed any
-		if err := json.Unmarshal([]byte(trimmed), &parsed); err == nil {
+		if err := json.Unmarshal([]byte(jsonPart), &parsed); err == nil {
 			redactJSON(&parsed)
 			out, err := json.Marshal(parsed)
 			if err == nil {
+				// Preserve any non-JSON prefix (stderr warnings) with
+				// line-based sanitisation.
+				if prefix != "" {
+					return sanitiseLines(prefix) + string(out)
+				}
 				return string(out)
 			}
 		}
 	}
 
 	// Fallback: line-based filtering for plain-text output.
-	// Match patterns as whole words to avoid false positives
-	// (e.g. "metadata:" must not match the "data:" pattern).
+	return sanitiseLines(output)
+}
+
+// findJSONStart returns the index of the first '{' or '[' in s, or -1.
+func findJSONStart(s string) int {
+	for i, r := range s {
+		if r == '{' || r == '[' {
+			return i
+		}
+	}
+	return -1
+}
+
+// sanitiseLines removes lines containing sensitive key patterns (whole-word
+// match to avoid false positives like "metadata:" matching "data:").
+func sanitiseLines(output string) string {
 	lines := strings.Split(output, "\n")
 	filtered := make([]string, 0, len(lines))
 	for _, line := range lines {
@@ -164,8 +186,6 @@ func sanitiseOutput(output string) string {
 			if idx == -1 {
 				continue
 			}
-			// Only match if the pattern is at a word boundary: start of
-			// line or preceded by whitespace/punctuation (not a letter).
 			if idx == 0 || !isWordChar(rune(lower[idx-1])) {
 				skip = true
 				break
