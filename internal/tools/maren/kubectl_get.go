@@ -10,7 +10,7 @@ import (
 	anthropic "github.com/anthropics/anthropic-sdk-go"
 )
 
-// ExecFn executes a command and returns its combined output.
+// ExecFn executes a command and returns its standard output (stdout).
 // Production callers pass a function wrapping os/exec.CommandContext;
 // tests inject a mock.
 type ExecFn func(ctx context.Context, name string, args ...string) ([]byte, error)
@@ -123,15 +123,19 @@ func (t *KubectlGetTool) Execute(ctx context.Context, input json.RawMessage) (st
 }
 
 // sensitiveKeys are JSON/YAML key names whose values should be redacted.
+// Includes manifest/notes because helm status embeds full YAML manifests
+// as string values that may contain secrets.
 var sensitiveKeys = map[string]bool{
 	"token":    true,
 	"password": true,
 	"secret":   true,
+	"manifest": true,
+	"notes":    true,
 }
 
 // sensitiveLinePatterns are key names that trigger line removal in plain-text
-// output. Matched as whole words to avoid false positives (e.g. "metadata:"
-// must not match "data:").
+// output. Matched as whole words to avoid false positives where a pattern
+// appears as part of a longer word.
 var sensitiveLinePatterns = []string{"token:", "password:", "secret:"}
 
 // sanitiseOutput redacts sensitive fields from tool output. If the output
@@ -173,8 +177,9 @@ func findJSONStart(s string) int {
 	return -1
 }
 
-// sanitiseLines removes lines containing sensitive key patterns (whole-word
-// match to avoid false positives like "metadata:" matching "data:").
+// sanitiseLines removes lines containing sensitive key patterns, using
+// whole-word matching to avoid false positives where a pattern appears as
+// part of a longer word.
 func sanitiseLines(output string) string {
 	lines := strings.Split(output, "\n")
 	filtered := make([]string, 0, len(lines))
