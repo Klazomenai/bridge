@@ -168,8 +168,10 @@ func extractCrewRequest(text string, knownCrew []string) string {
 	lower := strings.ToLower(text)
 
 	// "Over to <crew>" overrides prefix routing — check this first.
-	// Require a word boundary after the crew ID to avoid matching partial words
-	// (e.g. "crest" must not match "over to crestfallen").
+	// When multiple "over to" mentions exist, pick the earliest match in the
+	// message so routing is deterministic regardless of knownCrew slice order.
+	bestIdx := -1
+	bestCrew := ""
 	for _, c := range knownCrew {
 		phrase := "over to " + c
 		idx := strings.Index(lower, phrase)
@@ -178,8 +180,14 @@ func extractCrewRequest(text string, knownCrew []string) string {
 		}
 		after := idx + len(phrase)
 		if after == len(lower) || !isWordChar(rune(lower[after])) {
-			return c
+			if bestIdx == -1 || idx < bestIdx {
+				bestIdx = idx
+				bestCrew = c
+			}
 		}
+	}
+	if bestCrew != "" {
+		return bestCrew
 	}
 
 	// Prefix routing: "<crew>," or "<crew>:".

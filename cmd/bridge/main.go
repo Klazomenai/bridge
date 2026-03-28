@@ -92,6 +92,16 @@ func main() {
 	toolReg.Register(tools.NewStubTool("loki_query", "Query Loki logs (not configured)"))
 	slog.Info("lookout: tools registered as stubs")
 
+	// --- Chips tools ---
+	toolReg.Register(tools.NewStubTool("gh_issue_list", "List GitHub issues (not configured)"))
+	toolReg.Register(tools.NewStubTool("gh_issue_view", "View a GitHub issue (not configured)"))
+	toolReg.Register(tools.NewStubTool("gh_pr_list", "List GitHub pull requests (not configured)"))
+	toolReg.Register(tools.NewStubTool("gh_pr_view", "View a GitHub pull request (not configured)"))
+	toolReg.Register(tools.NewStubTool("gh_pr_checks", "Check PR CI status (not configured)"))
+	toolReg.Register(tools.NewStubTool("git_log", "View recent git commits (not configured)"))
+	toolReg.Register(tools.NewStubTool("git_diff", "View git diff between refs (not configured)"))
+	slog.Info("chips: tools registered as stubs")
+
 	// --- Crew registry ---
 	registryPath := mustEnv("CREW_REGISTRY_PATH", "/config/crew.yaml")
 	registry, err := crew.Load(registryPath)
