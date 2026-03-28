@@ -30,6 +30,24 @@ crew:
       model: "en_US-lessac-high.onnx"
       announces_as: "Crest:"
     system_prompt: "You are Crest. Respond in {verbosity}"
+  bosun:
+    name: "Bosun"
+    role: "Deck Supervisor"
+    model: "claude-sonnet-4-6"
+    verbosity: log-entry
+    voice:
+      model: "en_GB-alan-medium.onnx"
+      announces_as: "Bosun:"
+    system_prompt: "You are Bosun. Respond in {verbosity}"
+  lookout:
+    name: "Lookout"
+    role: "Watch"
+    model: "claude-haiku-4-5"
+    verbosity: signal
+    voice:
+      model: "en_US-amy-medium.onnx"
+      announces_as: "Lookout:"
+    system_prompt: "You are the Lookout. Respond in {verbosity}"
 `
 
 func writeRegistry(t *testing.T, content string) string {
@@ -320,17 +338,75 @@ func TestRegistryIDs(t *testing.T) {
 		t.Fatalf("Load: %v", err)
 	}
 	ids := r.IDs()
-	if len(ids) != 2 {
-		t.Fatalf("expected 2 crew IDs, got %d: %v", len(ids), ids)
+	if len(ids) != 4 {
+		t.Fatalf("expected 4 crew IDs, got %d: %v", len(ids), ids)
 	}
 	seen := make(map[string]bool)
 	for _, id := range ids {
 		seen[id] = true
 	}
-	for _, want := range []string{"maren", "crest"} {
+	for _, want := range []string{"maren", "crest", "bosun", "lookout"} {
 		if !seen[want] {
 			t.Errorf("expected ID %q in IDs(), got %v", want, ids)
 		}
+	}
+}
+
+func TestBosunAndLookoutGetters(t *testing.T) {
+	path := writeRegistry(t, validYAML)
+	r, err := crew.Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	bosun := r.Get("bosun")
+	if bosun == nil {
+		t.Fatal("bosun not found")
+	}
+	checks := []struct {
+		name string
+		got  string
+		want string
+	}{
+		{"ID", bosun.ID(), "bosun"},
+		{"Name", bosun.Name(), "Bosun"},
+		{"Role", bosun.Role(), "Deck Supervisor"},
+		{"Model", bosun.Model(), "claude-sonnet-4-6"},
+		{"Verbosity", bosun.Verbosity(), "log-entry"},
+		{"AnnouncesAs", bosun.AnnouncesAs(), "Bosun:"},
+		{"VoiceModel", bosun.VoiceModel(), "en_GB-alan-medium.onnx"},
+	}
+	for _, c := range checks {
+		t.Run("Bosun/"+c.name, func(t *testing.T) {
+			if c.got != c.want {
+				t.Errorf("got %q, want %q", c.got, c.want)
+			}
+		})
+	}
+
+	lookout := r.Get("lookout")
+	if lookout == nil {
+		t.Fatal("lookout not found")
+	}
+	lookoutChecks := []struct {
+		name string
+		got  string
+		want string
+	}{
+		{"ID", lookout.ID(), "lookout"},
+		{"Name", lookout.Name(), "Lookout"},
+		{"Role", lookout.Role(), "Watch"},
+		{"Model", lookout.Model(), "claude-haiku-4-5"},
+		{"Verbosity", lookout.Verbosity(), "signal"},
+		{"AnnouncesAs", lookout.AnnouncesAs(), "Lookout:"},
+		{"VoiceModel", lookout.VoiceModel(), "en_US-amy-medium.onnx"},
+	}
+	for _, c := range lookoutChecks {
+		t.Run("Lookout/"+c.name, func(t *testing.T) {
+			if c.got != c.want {
+				t.Errorf("got %q, want %q", c.got, c.want)
+			}
+		})
 	}
 }
 
@@ -377,6 +453,26 @@ crew:
       model: "en_US-lessac-high.onnx"
       announces_as: "Crest:"
     system_prompt: "You are Crest. Respond in {verbosity}"
+  bosun:
+    name: "Bosun"
+    role: "Deck Supervisor"
+    model: "claude-sonnet-4-6"
+    verbosity: log-entry
+    tools: [kubectl_get]
+    voice:
+      model: "en_GB-alan-medium.onnx"
+      announces_as: "Bosun:"
+    system_prompt: "You are Bosun. Respond in {verbosity}"
+  lookout:
+    name: "Lookout"
+    role: "Watch"
+    model: "claude-haiku-4-5"
+    verbosity: signal
+    tools: [prometheus_query, loki_query]
+    voice:
+      model: "en_US-amy-medium.onnx"
+      announces_as: "Lookout:"
+    system_prompt: "You are the Lookout. Respond in {verbosity}"
 `
 
 func TestToolsParsedFromYAML(t *testing.T) {
@@ -427,9 +523,11 @@ func TestValidateToolsAllPresent(t *testing.T) {
 	}
 
 	checker := &stubChecker{known: map[string]bool{
-		"kubectl_get": true,
-		"helm_status": true,
-		"imap_poll":   true,
+		"kubectl_get":      true,
+		"helm_status":      true,
+		"imap_poll":        true,
+		"prometheus_query": true,
+		"loki_query":       true,
 	}}
 	if err := r.ValidateTools(checker); err != nil {
 		t.Fatalf("expected no error, got: %v", err)

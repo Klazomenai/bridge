@@ -83,6 +83,15 @@ func main() {
 		slog.Info("crest: email tools registered as stubs (CREST_IMAP_HOST not set)")
 	}
 
+	// --- Bosun tools ---
+	toolReg.Register(tools.NewStubTool("kubectl_get", "Get Kubernetes resources (not configured)"))
+	slog.Info("bosun: tools registered as stubs")
+
+	// --- Lookout tools ---
+	toolReg.Register(tools.NewStubTool("prometheus_query", "Query Prometheus metrics (not configured)"))
+	toolReg.Register(tools.NewStubTool("loki_query", "Query Loki logs (not configured)"))
+	slog.Info("lookout: tools registered as stubs")
+
 	// --- Crew registry ---
 	registryPath := mustEnv("CREW_REGISTRY_PATH", "/config/crew.yaml")
 	registry, err := crew.Load(registryPath)
