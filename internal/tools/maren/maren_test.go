@@ -60,7 +60,7 @@ func TestKubectlGetWithName(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if (*calls)[0] != "kubectl get pods -n kube-system coredns" {
+	if (*calls)[0] != "kubectl get pods -n kube-system -- coredns" {
 		t.Errorf("unexpected command: %q", (*calls)[0])
 	}
 }
@@ -157,6 +157,58 @@ func TestKubectlGetSanitisesOutput(t *testing.T) {
 	}
 }
 
+func TestKubectlGetNamespaceFlagInjection(t *testing.T) {
+	fn, _ := mockExec("", nil)
+	tool := maren.NewKubectlGetTool(fn)
+
+	input := mustJSON(t, map[string]string{"resource_type": "pods", "namespace": "-A"})
+	_, err := tool.Execute(t.Context(), input)
+	if err == nil {
+		t.Fatal("expected error for namespace starting with '-'")
+	}
+	if !strings.Contains(err.Error(), "must not start with '-'") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestKubectlGetNameFlagInjection(t *testing.T) {
+	fn, _ := mockExec("", nil)
+	tool := maren.NewKubectlGetTool(fn)
+
+	input := mustJSON(t, map[string]string{"resource_type": "pods", "name": "-o yaml"})
+	_, err := tool.Execute(t.Context(), input)
+	if err == nil {
+		t.Fatal("expected error for name starting with '-'")
+	}
+	if !strings.Contains(err.Error(), "must not start with '-'") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestKubectlGetSanitisesJSONOutput(t *testing.T) {
+	raw := `{"items":[{"metadata":{"name":"app"},"data":{"key":"val"},"spec":{"token":"abc123","password":"hunter2","safe":"keep"}}]}`
+	fn, _ := mockExec(raw, nil)
+	tool := maren.NewKubectlGetTool(fn)
+
+	input := mustJSON(t, map[string]string{"resource_type": "configmaps"})
+	out, err := tool.Execute(t.Context(), input)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if strings.Contains(out, "abc123") {
+		t.Error("output should not contain token value")
+	}
+	if strings.Contains(out, "hunter2") {
+		t.Error("output should not contain password value")
+	}
+	if !strings.Contains(out, "[REDACTED]") {
+		t.Error("expected [REDACTED] in output")
+	}
+	if !strings.Contains(out, "keep") {
+		t.Error("safe values should be preserved")
+	}
+}
+
 func TestKubectlGetCaseInsensitiveResource(t *testing.T) {
 	fn, calls := mockExec("ok\n", nil)
 	tool := maren.NewKubectlGetTool(fn)
@@ -241,8 +293,8 @@ func TestHelmStatusExecError(t *testing.T) {
 	}
 }
 
-func TestHelmStatusSanitisesOutput(t *testing.T) {
-	raw := "line1\npassword: hunter2\nline3\n"
+func TestHelmStatusSanitisesJSONOutput(t *testing.T) {
+	raw := `{"name":"app","config":{"password":"hunter2","token":"abc","dbHost":"postgres:5432"}}`
 	fn, _ := mockExec(raw, nil)
 	tool := maren.NewHelmStatusTool(fn)
 
@@ -251,8 +303,17 @@ func TestHelmStatusSanitisesOutput(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if strings.Contains(out, "password:") {
-		t.Error("output should not contain 'password:' lines")
+	if strings.Contains(out, "hunter2") {
+		t.Error("output should not contain password value")
+	}
+	if strings.Contains(out, "abc") {
+		t.Error("output should not contain token value")
+	}
+	if !strings.Contains(out, "[REDACTED]") {
+		t.Error("expected [REDACTED] in output")
+	}
+	if !strings.Contains(out, "postgres:5432") {
+		t.Error("safe values should be preserved")
 	}
 }
 

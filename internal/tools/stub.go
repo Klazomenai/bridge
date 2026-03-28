@@ -28,5 +28,5 @@ func (s *stubTool) InputSchema() anthropic.ToolInputSchemaParam {
 	return anthropic.ToolInputSchemaParam{Properties: map[string]any{}}
 }
 func (s *stubTool) Execute(_ context.Context, _ json.RawMessage) (string, error) {
-	return "", fmt.Errorf("tool %q is not configured — required environment variables are missing", s.name)
+	return "", fmt.Errorf("tool %q is not available — %s", s.name, s.desc)
 }

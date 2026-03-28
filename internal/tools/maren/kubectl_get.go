@@ -101,11 +101,17 @@ func (t *KubectlGetTool) Execute(ctx context.Context, input json.RawMessage) (st
 	}
 
 	args := []string{"get", resource}
-	if params.Namespace != "" {
-		args = append(args, "-n", params.Namespace)
+	if ns := strings.TrimSpace(params.Namespace); ns != "" {
+		if strings.HasPrefix(ns, "-") {
+			return "", fmt.Errorf("invalid namespace: must not start with '-'")
+		}
+		args = append(args, "-n", ns)
 	}
-	if params.Name != "" {
-		args = append(args, params.Name)
+	if name := strings.TrimSpace(params.Name); name != "" {
+		if strings.HasPrefix(name, "-") {
+			return "", fmt.Errorf("invalid name: must not start with '-'")
+		}
+		args = append(args, "--", name)
 	}
 
 	out, err := t.execFn(ctx, "kubectl", args...)
@@ -116,17 +122,40 @@ func (t *KubectlGetTool) Execute(ctx context.Context, input json.RawMessage) (st
 	return sanitiseOutput(string(out)), nil
 }
 
-// sensitivePatterns are substrings that trigger line removal in tool output.
-var sensitivePatterns = []string{"token:", "password:", "secret:"}
+// sensitiveKeys are JSON/YAML key names whose values should be redacted.
+var sensitiveKeys = map[string]bool{
+	"token":    true,
+	"password": true,
+	"secret":   true,
+	"data":     true,
+}
 
-// sanitiseOutput removes lines containing sensitive key patterns.
+// sensitiveLinePatterns are substrings that trigger line removal in plain-text output.
+var sensitiveLinePatterns = []string{"token:", "password:", "secret:", "data:"}
+
+// sanitiseOutput redacts sensitive fields from tool output. If the output is
+// valid JSON, it performs structured redaction (preserving valid JSON). Otherwise
+// it falls back to line-based filtering for plain-text kubectl output.
 func sanitiseOutput(output string) string {
+	trimmed := strings.TrimSpace(output)
+	if len(trimmed) > 0 && (trimmed[0] == '{' || trimmed[0] == '[') {
+		var parsed any
+		if err := json.Unmarshal([]byte(trimmed), &parsed); err == nil {
+			redactJSON(&parsed)
+			out, err := json.Marshal(parsed)
+			if err == nil {
+				return string(out)
+			}
+		}
+	}
+
+	// Fallback: line-based filtering for plain-text output.
 	lines := strings.Split(output, "\n")
 	filtered := make([]string, 0, len(lines))
 	for _, line := range lines {
 		lower := strings.ToLower(line)
 		skip := false
-		for _, pat := range sensitivePatterns {
+		for _, pat := range sensitiveLinePatterns {
 			if strings.Contains(lower, pat) {
 				skip = true
 				break
@@ -137,4 +166,24 @@ func sanitiseOutput(output string) string {
 		}
 	}
 	return strings.Join(filtered, "\n")
+}
+
+// redactJSON recursively walks a parsed JSON value and replaces sensitive
+// key values with "[REDACTED]".
+func redactJSON(v *any) {
+	switch val := (*v).(type) {
+	case map[string]any:
+		for k, child := range val {
+			if sensitiveKeys[strings.ToLower(k)] {
+				val[k] = "[REDACTED]"
+			} else {
+				redactJSON(&child)
+				val[k] = child
+			}
+		}
+	case []any:
+		for i := range val {
+			redactJSON(&val[i])
+		}
+	}
 }
