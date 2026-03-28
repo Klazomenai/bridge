@@ -6,7 +6,7 @@ crew:
     role: "Shipwright"
     model: "claude-sonnet-4-6"
     verbosity: dispatch
-    tools: [delegate_to_crew]
+    tools: [delegate_to_crew, kubectl_get, helm_status]
     voice:
       model: "en_GB-cori-high.onnx"
       announces_as: "Maren:"

@@ -617,6 +617,7 @@ func TestRealCrewYAMLLoadsAndValidates(t *testing.T) {
 		"imap_poll":         true,
 		"smtp_send":         true,
 		"kubectl_get":       true,
+		"helm_status":       true,
 		"prometheus_query":  true,
 		"loki_query":        true,
 		"gh_issue_list":     true,
