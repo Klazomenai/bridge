@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	anthropic "github.com/anthropics/anthropic-sdk-go"
 )
@@ -48,11 +49,15 @@ func (t *HelmStatusTool) Execute(ctx context.Context, input json.RawMessage) (st
 		return "", fmt.Errorf("invalid input: %w", err)
 	}
 
-	if params.Release == "" {
+	release := strings.TrimSpace(params.Release)
+	if release == "" {
 		return "", fmt.Errorf("release is required")
 	}
+	if strings.HasPrefix(release, "-") {
+		return "", fmt.Errorf("invalid release: must not start with '-'")
+	}
 
-	args := []string{"status", params.Release, "-o", "json"}
+	args := []string{"status", release, "-o", "json"}
 	if params.Namespace != "" {
 		args = append(args, "-n", params.Namespace)
 	}

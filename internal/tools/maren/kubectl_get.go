@@ -130,7 +130,9 @@ var sensitiveKeys = map[string]bool{
 	"data":     true,
 }
 
-// sensitiveLinePatterns are substrings that trigger line removal in plain-text output.
+// sensitiveLinePatterns are key names that trigger line removal in plain-text
+// output. Matched as whole words to avoid false positives (e.g. "metadata:"
+// must not match "data:").
 var sensitiveLinePatterns = []string{"token:", "password:", "secret:", "data:"}
 
 // sanitiseOutput redacts sensitive fields from tool output. If the output is
@@ -150,13 +152,21 @@ func sanitiseOutput(output string) string {
 	}
 
 	// Fallback: line-based filtering for plain-text output.
+	// Match patterns as whole words to avoid false positives
+	// (e.g. "metadata:" must not match the "data:" pattern).
 	lines := strings.Split(output, "\n")
 	filtered := make([]string, 0, len(lines))
 	for _, line := range lines {
 		lower := strings.ToLower(line)
 		skip := false
 		for _, pat := range sensitiveLinePatterns {
-			if strings.Contains(lower, pat) {
+			idx := strings.Index(lower, pat)
+			if idx == -1 {
+				continue
+			}
+			// Only match if the pattern is at a word boundary: start of
+			// line or preceded by whitespace/punctuation (not a letter).
+			if idx == 0 || !isWordChar(rune(lower[idx-1])) {
 				skip = true
 				break
 			}
@@ -166,6 +176,11 @@ func sanitiseOutput(output string) string {
 		}
 	}
 	return strings.Join(filtered, "\n")
+}
+
+// isWordChar reports whether r is a letter (ASCII).
+func isWordChar(r rune) bool {
+	return (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z')
 }
 
 // redactJSON recursively walks a parsed JSON value and replaces sensitive

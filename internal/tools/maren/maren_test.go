@@ -209,6 +209,24 @@ func TestKubectlGetSanitisesJSONOutput(t *testing.T) {
 	}
 }
 
+func TestKubectlGetDoesNotOverSanitiseMetadata(t *testing.T) {
+	raw := "NAME   DATA\napp    config\nmetadata: {}\ndb     token: abc123\n"
+	fn, _ := mockExec(raw, nil)
+	tool := maren.NewKubectlGetTool(fn)
+
+	input := mustJSON(t, map[string]string{"resource_type": "configmaps"})
+	out, err := tool.Execute(t.Context(), input)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if strings.Contains(out, "token:") {
+		t.Error("output should not contain 'token:' lines")
+	}
+	if !strings.Contains(out, "metadata:") {
+		t.Error("output should still contain 'metadata:' lines")
+	}
+}
+
 func TestKubectlGetCaseInsensitiveResource(t *testing.T) {
 	fn, calls := mockExec("ok\n", nil)
 	tool := maren.NewKubectlGetTool(fn)
@@ -268,6 +286,20 @@ func TestHelmStatusNoNamespace(t *testing.T) {
 	}
 	if (*calls)[0] != "helm status app -o json" {
 		t.Errorf("unexpected command: %q", (*calls)[0])
+	}
+}
+
+func TestHelmStatusReleaseFlagInjection(t *testing.T) {
+	fn, _ := mockExec("", nil)
+	tool := maren.NewHelmStatusTool(fn)
+
+	input := mustJSON(t, map[string]string{"release": "--kubeconfig=/etc/shadow"})
+	_, err := tool.Execute(t.Context(), input)
+	if err == nil {
+		t.Fatal("expected error for release starting with '-'")
+	}
+	if !strings.Contains(err.Error(), "must not start with '-'") {
+		t.Errorf("unexpected error: %v", err)
 	}
 }
 
