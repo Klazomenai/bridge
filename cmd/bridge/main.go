@@ -20,6 +20,7 @@ import (
 	"klazomenai/bridge/internal/orchestrator"
 	"klazomenai/bridge/internal/tools"
 	cresttools "klazomenai/bridge/internal/tools/crest"
+	lookouttools "klazomenai/bridge/internal/tools/lookout"
 	marentools "klazomenai/bridge/internal/tools/maren"
 )
 
@@ -102,9 +103,20 @@ func main() {
 	}
 
 	// --- Lookout tools ---
-	toolReg.Register(tools.NewStubTool("prometheus_query", "Query Prometheus metrics (not configured)"))
-	toolReg.Register(tools.NewStubTool("loki_query", "Query Loki logs (not configured)"))
-	slog.Info("lookout: tools registered as stubs")
+	if promURL := os.Getenv("PROMETHEUS_URL"); promURL != "" {
+		toolReg.Register(lookouttools.NewPrometheusQueryTool(promURL, lookouttools.DefaultHTTPClient()))
+		slog.Info("lookout: prometheus_query registered", "url", promURL)
+	} else {
+		toolReg.Register(tools.NewStubTool("prometheus_query", "Query Prometheus metrics (PROMETHEUS_URL not set)"))
+		slog.Info("lookout: prometheus_query registered as stub (PROMETHEUS_URL not set)")
+	}
+	if lokiURL := os.Getenv("LOKI_URL"); lokiURL != "" {
+		toolReg.Register(lookouttools.NewLokiQueryTool(lokiURL, lookouttools.DefaultHTTPClient()))
+		slog.Info("lookout: loki_query registered", "url", lokiURL)
+	} else {
+		toolReg.Register(tools.NewStubTool("loki_query", "Query Loki logs (LOKI_URL not set)"))
+		slog.Info("lookout: loki_query registered as stub (LOKI_URL not set)")
+	}
 
 	// --- Chips tools ---
 	toolReg.Register(tools.NewStubTool("gh_issue_list", "List GitHub issues (not configured)"))
