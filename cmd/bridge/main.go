@@ -20,6 +20,7 @@ import (
 	"klazomenai/bridge/internal/orchestrator"
 	"klazomenai/bridge/internal/tools"
 	cresttools "klazomenai/bridge/internal/tools/crest"
+	chipstools "klazomenai/bridge/internal/tools/chips"
 	lookouttools "klazomenai/bridge/internal/tools/lookout"
 	marentools "klazomenai/bridge/internal/tools/maren"
 )
@@ -119,14 +120,29 @@ func main() {
 	}
 
 	// --- Chips tools ---
-	toolReg.Register(tools.NewStubTool("gh_issue_list", "List GitHub issues (not configured)"))
-	toolReg.Register(tools.NewStubTool("gh_issue_view", "View a GitHub issue (not configured)"))
-	toolReg.Register(tools.NewStubTool("gh_pr_list", "List GitHub pull requests (not configured)"))
-	toolReg.Register(tools.NewStubTool("gh_pr_view", "View a GitHub pull request (not configured)"))
-	toolReg.Register(tools.NewStubTool("gh_pr_checks", "Check PR CI status (not configured)"))
-	toolReg.Register(tools.NewStubTool("git_log", "View recent git commits (not configured)"))
-	toolReg.Register(tools.NewStubTool("git_diff", "View git diff between refs (not configured)"))
-	slog.Info("chips: tools registered as stubs")
+	ghToken := os.Getenv("GITHUB_TOKEN")
+	chipsRepoCSV := os.Getenv("CHIPS_REPO_ALLOWLIST")
+	if ghToken != "" && chipsRepoCSV != "" && hasExec("gh") && hasExec("git") {
+		allowlist := chipstools.ParseRepoAllowlist(chipsRepoCSV)
+		execFn := chipstools.DefaultExecFn()
+		toolReg.Register(chipstools.NewGHIssueListTool(execFn, allowlist, ghToken))
+		toolReg.Register(chipstools.NewGHIssueViewTool(execFn, allowlist, ghToken))
+		toolReg.Register(chipstools.NewGHPRListTool(execFn, allowlist, ghToken))
+		toolReg.Register(chipstools.NewGHPRViewTool(execFn, allowlist, ghToken))
+		toolReg.Register(chipstools.NewGHPRChecksTool(execFn, allowlist, ghToken))
+		toolReg.Register(chipstools.NewGitLogTool(execFn, ghToken))
+		toolReg.Register(chipstools.NewGitDiffTool(execFn, ghToken))
+		slog.Info("chips: tools registered", "repos", chipsRepoCSV)
+	} else {
+		toolReg.Register(tools.NewStubTool("gh_issue_list", "List GitHub issues (GITHUB_TOKEN or CHIPS_REPO_ALLOWLIST not set, or gh/git not available)"))
+		toolReg.Register(tools.NewStubTool("gh_issue_view", "View a GitHub issue (GITHUB_TOKEN or CHIPS_REPO_ALLOWLIST not set, or gh/git not available)"))
+		toolReg.Register(tools.NewStubTool("gh_pr_list", "List GitHub pull requests (GITHUB_TOKEN or CHIPS_REPO_ALLOWLIST not set, or gh/git not available)"))
+		toolReg.Register(tools.NewStubTool("gh_pr_view", "View a GitHub pull request (GITHUB_TOKEN or CHIPS_REPO_ALLOWLIST not set, or gh/git not available)"))
+		toolReg.Register(tools.NewStubTool("gh_pr_checks", "Check PR CI status (GITHUB_TOKEN or CHIPS_REPO_ALLOWLIST not set, or gh/git not available)"))
+		toolReg.Register(tools.NewStubTool("git_log", "View recent git commits (GITHUB_TOKEN or gh/git not available)"))
+		toolReg.Register(tools.NewStubTool("git_diff", "View git diff between refs (GITHUB_TOKEN or gh/git not available)"))
+		slog.Info("chips: tools registered as stubs")
+	}
 
 	// --- Crew registry ---
 	registryPath := mustEnv("CREW_REGISTRY_PATH", "/config/crew.yaml")
