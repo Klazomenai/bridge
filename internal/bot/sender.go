@@ -2,6 +2,7 @@ package bot
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"maunium.net/go/mautrix"
@@ -36,6 +37,13 @@ type matrixSender struct {
 	client *mautrix.Client
 }
 
+// formatBody prepends crew metadata as a body prefix so that clients using
+// typed Matrix SDKs (which strip custom JSON fields) can identify the crew
+// member and verbosity level. Format: [crewID:verbosity] text
+func formatBody(crewID, verbosity, text string) string {
+	return fmt.Sprintf("[%s:%s] %s", crewID, verbosity, text)
+}
+
 func (s *matrixSender) Send(ctx context.Context, roomID id.RoomID, resp *orchestrator.Response) error {
 	_, err := s.client.SendMessageEvent(ctx, roomID, event.EventMessage, struct {
 		MsgType    event.MessageType `json:"msgtype"`
@@ -44,7 +52,7 @@ func (s *matrixSender) Send(ctx context.Context, roomID id.RoomID, resp *orchest
 		Verbosity  string            `json:"verbosity"`
 	}{
 		MsgType:    event.MsgText,
-		Body:       resp.Text,
+		Body:       formatBody(resp.CrewID, resp.Verbosity, resp.Text),
 		CrewMember: resp.CrewID,
 		Verbosity:  resp.Verbosity,
 	})
