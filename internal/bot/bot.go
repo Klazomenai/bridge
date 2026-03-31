@@ -139,14 +139,19 @@ func (b *Bot) enforceRoomAllowlist(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("fetch joined rooms for allowlist enforcement: %w", err)
 	}
+	var leaveErr error
 	for _, roomID := range resp.JoinedRooms {
 		if !b.isRoomAllowed(roomID) {
 			if _, err := b.client.LeaveRoom(ctx, roomID); err != nil {
 				slog.Error("bot: failed to leave disallowed room", "room", roomID, "err", err)
+				leaveErr = errors.Join(leaveErr, fmt.Errorf("leave disallowed room %s: %w", roomID, err))
 			} else {
 				slog.Warn("bot: left disallowed room on startup", "room", roomID)
 			}
 		}
+	}
+	if leaveErr != nil {
+		return fmt.Errorf("leave disallowed rooms: %w", leaveErr)
 	}
 	return nil
 }
