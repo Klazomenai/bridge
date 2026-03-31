@@ -6,6 +6,7 @@ package main
 import (
 	"context"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -17,6 +18,7 @@ import (
 	ctxbuf "klazomenai/bridge/internal/context"
 	"klazomenai/bridge/internal/crest"
 	"klazomenai/bridge/internal/crew"
+	"klazomenai/bridge/internal/health"
 	"klazomenai/bridge/internal/orchestrator"
 	"klazomenai/bridge/internal/tools"
 	cresttools "klazomenai/bridge/internal/tools/crest"
@@ -199,6 +201,24 @@ func main() {
 		})
 		slog.Info("crest: imap poller started", "host", imapHost)
 	}
+
+	// --- Health probes ---
+	healthPort := mustEnv("HEALTH_PORT", "8080")
+	healthSrv := health.New(healthPort)
+	matrixBot.OnReady = healthSrv.SetReady
+	go func() {
+		if err := healthSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			slog.Error("health server error", "err", err)
+		}
+	}()
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := healthSrv.Shutdown(shutdownCtx); err != nil {
+			slog.Error("health server shutdown error", "err", err)
+		}
+	}()
+	slog.Info("health: server started", "port", healthPort)
 
 	// --- Start bot (blocks until ctx cancelled) ---
 	slog.Info("bridge: starting")
