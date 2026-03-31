@@ -6,14 +6,13 @@ package main
 import (
 	"context"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
 	"strings"
 	"syscall"
 	"time"
-
-	"net/http"
 
 	"klazomenai/bridge/internal/bot"
 	ctxbuf "klazomenai/bridge/internal/context"
