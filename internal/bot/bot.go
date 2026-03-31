@@ -17,6 +17,7 @@ import (
 	"maunium.net/go/mautrix"
 	"maunium.net/go/mautrix/crypto/cryptohelper"
 	"maunium.net/go/mautrix/event"
+	"maunium.net/go/mautrix/id"
 
 	"klazomenai/bridge/internal/orchestrator"
 )
@@ -33,13 +34,14 @@ const DefaultCryptoDBPath = "/var/lib/bridge/bridge.db"
 
 // Config holds bot connection parameters.
 type Config struct {
-	Homeserver   string
-	Username     string
-	Password     string
-	CryptoDBPath string   // path to SQLite DB for E2EE key persistence (PVC)
-	PickleKey    string   // secret used to encrypt the olm account on disk
-	DisplayName  string
-	KnownCrew    []string // crew IDs loaded from registry — used for routing
+	Homeserver    string
+	Username      string
+	Password      string
+	CryptoDBPath  string              // path to SQLite DB for E2EE key persistence (PVC)
+	PickleKey     string              // secret used to encrypt the olm account on disk
+	DisplayName   string
+	KnownCrew     []string            // crew IDs loaded from registry — used for routing
+	RoomAllowlist map[id.RoomID]struct{} // permitted rooms — empty = deny all (fail-closed)
 }
 
 // Bot is the mautrix-go Matrix bot.
@@ -60,6 +62,11 @@ func New(cfg Config, orch OrchestratorI) (*Bot, error) {
 	}
 	if cfg.DisplayName == "" {
 		cfg.DisplayName = "Bridge"
+	}
+
+	slog.Info("bot: room allowlist", "count", len(cfg.RoomAllowlist))
+	if len(cfg.RoomAllowlist) == 0 {
+		slog.Warn("bot: room allowlist is empty — all invites will be rejected")
 	}
 
 	client, err := mautrix.NewClient(cfg.Homeserver, "", "")
@@ -108,6 +115,9 @@ func (b *Bot) Start(ctx context.Context) error {
 	}
 	b.client.Crypto = helper
 
+	if err := b.enforceRoomAllowlist(ctx); err != nil {
+		return fmt.Errorf("room allowlist enforcement: %w", err)
+	}
 	b.registerHandlers()
 
 	if b.OnReady != nil {
@@ -121,14 +131,61 @@ func (b *Bot) Start(ctx context.Context) error {
 	return nil
 }
 
+// enforceRoomAllowlist leaves any joined rooms not on the allowlist.
+// Called once at startup before the sync loop begins.
+// Returns an error if room membership cannot be verified (fail-closed).
+func (b *Bot) enforceRoomAllowlist(ctx context.Context) error {
+	resp, err := b.client.JoinedRooms(ctx)
+	if err != nil {
+		return fmt.Errorf("fetch joined rooms for allowlist enforcement: %w", err)
+	}
+	var leaveErr error
+	for _, roomID := range resp.JoinedRooms {
+		if !b.isRoomAllowed(roomID) {
+			if _, err := b.client.LeaveRoom(ctx, roomID); err != nil {
+				slog.Error("bot: failed to leave disallowed room", "room", roomID, "err", err)
+				leaveErr = errors.Join(leaveErr, fmt.Errorf("leave disallowed room %s: %w", roomID, err))
+			} else {
+				slog.Warn("bot: left disallowed room on startup", "room", roomID)
+			}
+		}
+	}
+	if leaveErr != nil {
+		return fmt.Errorf("leave disallowed rooms: %w", leaveErr)
+	}
+	return nil
+}
+
+// isRoomAllowed reports whether roomID is on the configured allowlist.
+// Returns false when the allowlist is empty or nil (fail-closed).
+func (b *Bot) isRoomAllowed(roomID id.RoomID) bool {
+	if len(b.cfg.RoomAllowlist) == 0 {
+		return false
+	}
+	_, ok := b.cfg.RoomAllowlist[roomID]
+	return ok
+}
+
 // registerHandlers wires up event handlers on the syncer.
 func (b *Bot) registerHandlers() {
 	syncer := b.client.Syncer.(*mautrix.DefaultSyncer)
 
-	// Auto-accept invites.
+	// Accept invites only for allowlisted rooms; reject all others.
 	syncer.OnEventType(event.StateMember, func(ctx context.Context, evt *event.Event) {
+		member := evt.Content.AsMember()
+		if member == nil {
+			return
+		}
 		if evt.GetStateKey() == b.client.UserID.String() &&
-			evt.Content.AsMember().Membership == event.MembershipInvite {
+			member.Membership == event.MembershipInvite {
+			if !b.isRoomAllowed(evt.RoomID) {
+				if _, err := b.client.LeaveRoom(ctx, evt.RoomID); err != nil {
+					slog.Error("bot: failed to reject invite from disallowed room", "room", evt.RoomID, "err", err)
+				} else {
+					slog.Warn("bot: rejected invite from disallowed room", "room", evt.RoomID)
+				}
+				return
+			}
 			if _, err := b.client.JoinRoomByID(ctx, evt.RoomID); err != nil {
 				slog.Error("bot: failed to join room", "room", evt.RoomID, "err", err)
 			} else {

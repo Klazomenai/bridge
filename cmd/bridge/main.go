@@ -14,6 +14,8 @@ import (
 	"syscall"
 	"time"
 
+	"maunium.net/go/mautrix/id"
+
 	"klazomenai/bridge/internal/bot"
 	ctxbuf "klazomenai/bridge/internal/context"
 	"klazomenai/bridge/internal/crest"
@@ -168,13 +170,14 @@ func main() {
 
 	// --- Matrix bot ---
 	botCfg := bot.Config{
-		Homeserver:   mustEnv("MATRIX_HOMESERVER", ""),
-		Username:     mustEnv("MATRIX_USERNAME", ""),
-		Password:     mustEnv("MATRIX_PASSWORD", ""),
-		CryptoDBPath: mustEnv("CRYPTO_DB_PATH", bot.DefaultCryptoDBPath),
-		PickleKey:    mustEnv("PICKLE_KEY", ""),
-		DisplayName:  "Bridge",
-		KnownCrew:    registry.IDs(),
+		Homeserver:    mustEnv("MATRIX_HOMESERVER", ""),
+		Username:      mustEnv("MATRIX_USERNAME", ""),
+		Password:      mustEnv("MATRIX_PASSWORD", ""),
+		CryptoDBPath:  mustEnv("CRYPTO_DB_PATH", bot.DefaultCryptoDBPath),
+		PickleKey:     mustEnv("PICKLE_KEY", ""),
+		DisplayName:   "Bridge",
+		KnownCrew:     registry.IDs(),
+		RoomAllowlist: parseRoomAllowlist(os.Getenv("MATRIX_ROOM_ALLOWLIST")),
 	}
 	if botCfg.Homeserver == "" || botCfg.Username == "" || botCfg.Password == "" || botCfg.PickleKey == "" {
 		slog.Error("MATRIX_HOMESERVER, MATRIX_USERNAME, MATRIX_PASSWORD, and PICKLE_KEY are required")
@@ -237,6 +240,19 @@ func mustEnv(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// parseRoomAllowlist splits a comma-separated list of Matrix room IDs into a
+// set for O(1) lookup. Empty entries are skipped.
+func parseRoomAllowlist(csv string) map[id.RoomID]struct{} {
+	list := make(map[id.RoomID]struct{})
+	for _, entry := range strings.Split(csv, ",") {
+		entry = strings.TrimSpace(entry)
+		if entry != "" {
+			list[id.RoomID(entry)] = struct{}{}
+		}
+	}
+	return list
 }
 
 // hasExec reports whether a binary is available on PATH.

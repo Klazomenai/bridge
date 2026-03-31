@@ -35,6 +35,12 @@ func (b *Bot) handleMessage(ctx context.Context, evt *event.Event) {
 		return
 	}
 
+	// Defense-in-depth: reject messages from rooms not on the allowlist.
+	if !b.isRoomAllowed(evt.RoomID) {
+		slog.Warn("bot: ignoring message from disallowed room", "room", evt.RoomID, "sender", evt.Sender)
+		return
+	}
+
 	content := evt.Content.AsMessage()
 	if content == nil || content.MsgType != event.MsgText {
 		return
