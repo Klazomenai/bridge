@@ -689,7 +689,7 @@ func TestInviteRejectedForDisallowedRoom(t *testing.T) {
 	evt.StateKey = &stateKey
 
 	syncer := client.Syncer.(*mautrix.DefaultSyncer)
-	syncer.ProcessResponse(t.Context(), &mautrix.RespSync{
+	_ = syncer.ProcessResponse(t.Context(), &mautrix.RespSync{
 		Rooms: mautrix.RespSyncRooms{
 			Invite: map[id.RoomID]*mautrix.SyncInvitedRoom{
 				"!evil:server": {
@@ -752,7 +752,7 @@ func TestInviteAcceptedForAllowedRoom(t *testing.T) {
 	evt.StateKey = &stateKey
 
 	syncer := client.Syncer.(*mautrix.DefaultSyncer)
-	syncer.ProcessResponse(t.Context(), &mautrix.RespSync{
+	_ = syncer.ProcessResponse(t.Context(), &mautrix.RespSync{
 		Rooms: mautrix.RespSyncRooms{
 			Invite: map[id.RoomID]*mautrix.SyncInvitedRoom{
 				"!welcome:server": {
