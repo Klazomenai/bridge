@@ -635,7 +635,9 @@ func TestEnforceRoomAllowlist(t *testing.T) {
 		},
 	}
 
-	b.enforceRoomAllowlist(t.Context())
+	if err := b.enforceRoomAllowlist(t.Context()); err != nil {
+		t.Fatalf("enforceRoomAllowlist: %v", err)
+	}
 
 	if len(leftRooms) != 1 {
 		t.Fatalf("expected 1 leave call, got %d", len(leftRooms))

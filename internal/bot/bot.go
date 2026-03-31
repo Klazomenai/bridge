@@ -115,7 +115,9 @@ func (b *Bot) Start(ctx context.Context) error {
 	}
 	b.client.Crypto = helper
 
-	b.enforceRoomAllowlist(ctx)
+	if err := b.enforceRoomAllowlist(ctx); err != nil {
+		return fmt.Errorf("room allowlist enforcement: %w", err)
+	}
 	b.registerHandlers()
 
 	if b.OnReady != nil {
@@ -131,11 +133,11 @@ func (b *Bot) Start(ctx context.Context) error {
 
 // enforceRoomAllowlist leaves any joined rooms not on the allowlist.
 // Called once at startup before the sync loop begins.
-func (b *Bot) enforceRoomAllowlist(ctx context.Context) {
+// Returns an error if room membership cannot be verified (fail-closed).
+func (b *Bot) enforceRoomAllowlist(ctx context.Context) error {
 	resp, err := b.client.JoinedRooms(ctx)
 	if err != nil {
-		slog.Error("bot: failed to fetch joined rooms for allowlist enforcement", "err", err)
-		return
+		return fmt.Errorf("fetch joined rooms for allowlist enforcement: %w", err)
 	}
 	for _, roomID := range resp.JoinedRooms {
 		if !b.isRoomAllowed(roomID) {
@@ -146,6 +148,7 @@ func (b *Bot) enforceRoomAllowlist(ctx context.Context) {
 			}
 		}
 	}
+	return nil
 }
 
 // isRoomAllowed reports whether roomID is on the configured allowlist.
@@ -167,8 +170,11 @@ func (b *Bot) registerHandlers() {
 		if evt.GetStateKey() == b.client.UserID.String() &&
 			evt.Content.AsMember().Membership == event.MembershipInvite {
 			if !b.isRoomAllowed(evt.RoomID) {
-				slog.Warn("bot: rejected invite from disallowed room", "room", evt.RoomID)
-				_, _ = b.client.LeaveRoom(ctx, evt.RoomID)
+				if _, err := b.client.LeaveRoom(ctx, evt.RoomID); err != nil {
+					slog.Error("bot: failed to reject invite from disallowed room", "room", evt.RoomID, "err", err)
+				} else {
+					slog.Warn("bot: rejected invite from disallowed room", "room", evt.RoomID)
+				}
 				return
 			}
 			if _, err := b.client.JoinRoomByID(ctx, evt.RoomID); err != nil {
