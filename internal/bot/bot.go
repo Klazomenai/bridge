@@ -40,8 +40,10 @@ type Config struct {
 	CryptoDBPath  string              // path to SQLite DB for E2EE key persistence (PVC)
 	PickleKey     string              // secret used to encrypt the olm account on disk
 	DisplayName   string
-	KnownCrew     []string            // crew IDs loaded from registry — used for routing
+	KnownCrew     []string                // crew IDs loaded from registry — used for routing
 	RoomAllowlist map[id.RoomID]struct{} // permitted rooms — empty = deny all (fail-closed)
+	UserAuth      *UserAuthorization     // per-user crew authorization — nil = deny all (fail-closed)
+	DefaultCrew   string                 // default crew ID for unprefixed messages
 }
 
 // Bot is the mautrix-go Matrix bot.
@@ -67,6 +69,12 @@ func New(cfg Config, orch OrchestratorI) (*Bot, error) {
 	slog.Info("bot: room allowlist", "count", len(cfg.RoomAllowlist))
 	if len(cfg.RoomAllowlist) == 0 {
 		slog.Warn("bot: room allowlist is empty — all invites will be rejected")
+	}
+
+	if cfg.UserAuth != nil {
+		slog.Info("bot: user authorization enabled", "users", cfg.UserAuth.Len())
+	} else {
+		slog.Warn("bot: user authorization not configured — all messages will be rejected")
 	}
 
 	client, err := mautrix.NewClient(cfg.Homeserver, "", "")

@@ -53,6 +53,17 @@ func (b *Bot) handleMessage(ctx context.Context, evt *event.Event) {
 
 	requestedCrew := extractCrewRequest(text, b.cfg.KnownCrew)
 
+	// Per-user authorization: check sender is permitted for the target crew.
+	effectiveCrew := requestedCrew
+	if effectiveCrew == "" {
+		effectiveCrew = b.cfg.DefaultCrew
+	}
+	if !b.cfg.UserAuth.IsAuthorized(evt.Sender, effectiveCrew) {
+		slog.Warn("bot: unauthorized crew access",
+			"sender", evt.Sender, "crew", effectiveCrew, "room", evt.RoomID)
+		return
+	}
+
 	slog.Info("bot: message received",
 		"room", evt.RoomID, "sender", evt.Sender,
 		"crew_request", requestedCrew)
