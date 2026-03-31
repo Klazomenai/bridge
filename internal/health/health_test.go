@@ -92,3 +92,24 @@ func TestHealthzContentType(t *testing.T) {
 		t.Errorf("expected application/json, got %q", ct)
 	}
 }
+
+func TestReadyzContentTypeNotReady(t *testing.T) {
+	srv := newTestServer(t)
+
+	resp, _ := doRequest(t, srv, "/readyz")
+	ct := resp.Header.Get("Content-Type")
+	if ct != "application/json" {
+		t.Errorf("expected application/json, got %q", ct)
+	}
+}
+
+func TestReadyzContentTypeReady(t *testing.T) {
+	srv := newTestServer(t)
+	srv.SetReady()
+
+	resp, _ := doRequest(t, srv, "/readyz")
+	ct := resp.Header.Get("Content-Type")
+	if ct != "application/json" {
+		t.Errorf("expected application/json, got %q", ct)
+	}
+}

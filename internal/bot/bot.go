@@ -50,7 +50,7 @@ type Bot struct {
 	sender  Sender
 	typer   Typer
 	cfg     Config
-	OnReady func() // called once crypto + handlers initialised, before sync
+	OnReady func() // called after crypto + handlers are initialised, before the sync loop starts
 }
 
 // New creates a Bot but does not connect yet.

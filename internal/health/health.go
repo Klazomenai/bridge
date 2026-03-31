@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 	"sync/atomic"
+	"time"
 )
 
 // Server exposes /healthz (liveness) and /readyz (readiness) endpoints.
@@ -24,8 +25,12 @@ func New(port string) *Server {
 	mux.HandleFunc("GET /healthz", s.handleLive)
 	mux.HandleFunc("GET /readyz", s.handleReady)
 	s.srv = &http.Server{
-		Addr:    net.JoinHostPort("", strings.TrimPrefix(port, ":")),
-		Handler: mux,
+		Addr:              net.JoinHostPort("", strings.TrimPrefix(port, ":")),
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       5 * time.Second,
+		WriteTimeout:      5 * time.Second,
+		IdleTimeout:       30 * time.Second,
 	}
 	return s
 }
