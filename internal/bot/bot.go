@@ -172,8 +172,12 @@ func (b *Bot) registerHandlers() {
 
 	// Accept invites only for allowlisted rooms; reject all others.
 	syncer.OnEventType(event.StateMember, func(ctx context.Context, evt *event.Event) {
+		member := evt.Content.AsMember()
+		if member == nil {
+			return
+		}
 		if evt.GetStateKey() == b.client.UserID.String() &&
-			evt.Content.AsMember().Membership == event.MembershipInvite {
+			member.Membership == event.MembershipInvite {
 			if !b.isRoomAllowed(evt.RoomID) {
 				if _, err := b.client.LeaveRoom(ctx, evt.RoomID); err != nil {
 					slog.Error("bot: failed to reject invite from disallowed room", "room", evt.RoomID, "err", err)
