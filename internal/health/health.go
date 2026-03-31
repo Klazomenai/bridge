@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net"
 	"net/http"
+	"strings"
 	"sync/atomic"
 )
 
@@ -16,13 +17,14 @@ type Server struct {
 }
 
 // New creates a health server listening on the given port.
+// The port may be a bare number ("8080") or prefixed with a colon (":8080").
 func New(port string) *Server {
 	s := &Server{}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.handleLive)
 	mux.HandleFunc("GET /readyz", s.handleReady)
 	s.srv = &http.Server{
-		Addr:    net.JoinHostPort("", port),
+		Addr:    net.JoinHostPort("", strings.TrimPrefix(port, ":")),
 		Handler: mux,
 	}
 	return s

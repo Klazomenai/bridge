@@ -204,15 +204,22 @@ func main() {
 	}
 
 	// --- Health probes ---
-	healthSrv := health.New(mustEnv("HEALTH_PORT", "8080"))
+	healthPort := mustEnv("HEALTH_PORT", "8080")
+	healthSrv := health.New(healthPort)
 	matrixBot.OnReady = healthSrv.SetReady
 	go func() {
 		if err := healthSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			slog.Error("health server error", "err", err)
 		}
 	}()
-	defer func() { _ = healthSrv.Shutdown(context.Background()) }()
-	slog.Info("health: server started", "port", mustEnv("HEALTH_PORT", "8080"))
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := healthSrv.Shutdown(shutdownCtx); err != nil {
+			slog.Error("health server shutdown error", "err", err)
+		}
+	}()
+	slog.Info("health: server started", "port", healthPort)
 
 	// --- Start bot (blocks until ctx cancelled) ---
 	slog.Info("bridge: starting")
