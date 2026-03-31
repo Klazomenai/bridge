@@ -71,10 +71,12 @@ func New(cfg Config, orch OrchestratorI) (*Bot, error) {
 		slog.Warn("bot: room allowlist is empty — all invites will be rejected")
 	}
 
-	if cfg.UserAuth != nil {
-		slog.Info("bot: user authorization enabled", "users", cfg.UserAuth.Len())
-	} else {
+	if cfg.UserAuth == nil {
 		slog.Warn("bot: user authorization not configured — all messages will be rejected")
+	} else if cfg.UserAuth.Len() == 0 {
+		slog.Warn("bot: user authorization is configured but has no users — all messages will be rejected")
+	} else {
+		slog.Info("bot: user authorization enabled", "users", cfg.UserAuth.Len())
 	}
 
 	client, err := mautrix.NewClient(cfg.Homeserver, "", "")

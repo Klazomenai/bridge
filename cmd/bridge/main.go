@@ -163,7 +163,7 @@ func main() {
 	}
 
 	// --- User authorization ---
-	authPath := mustEnv("MATRIX_AUTH_PATH", "/config/auth.yaml")
+	authPath := mustEnv("MATRIX_AUTH_PATH", "")
 	userAuth, err := bot.LoadAuth(authPath)
 	if err != nil {
 		slog.Error("failed to load auth config", "path", authPath, "err", err)
