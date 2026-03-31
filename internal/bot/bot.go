@@ -44,12 +44,13 @@ type Config struct {
 
 // Bot is the mautrix-go Matrix bot.
 type Bot struct {
-	client *mautrix.Client
-	helper *cryptohelper.CryptoHelper
-	orch   OrchestratorI
-	sender Sender
-	typer  Typer
-	cfg    Config
+	client  *mautrix.Client
+	helper  *cryptohelper.CryptoHelper
+	orch    OrchestratorI
+	sender  Sender
+	typer   Typer
+	cfg     Config
+	OnReady func() // called once crypto + handlers initialised, before sync
 }
 
 // New creates a Bot but does not connect yet.
@@ -108,6 +109,10 @@ func (b *Bot) Start(ctx context.Context) error {
 	b.client.Crypto = helper
 
 	b.registerHandlers()
+
+	if b.OnReady != nil {
+		b.OnReady()
+	}
 
 	slog.Info("bot: sync starting", "user", b.client.UserID)
 	if err := b.client.SyncWithContext(ctx); err != nil && !errors.Is(err, context.Canceled) {
