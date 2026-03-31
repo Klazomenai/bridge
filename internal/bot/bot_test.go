@@ -5,6 +5,8 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -329,6 +331,9 @@ func newTestBotWithTyper(t *testing.T, orch OrchestratorI, sender Sender, typer 
 		cfg: Config{
 			Username:  string(selfUserID),
 			KnownCrew: []string{"maren", "crest", "bosun", "lookout", "chips"},
+			RoomAllowlist: map[id.RoomID]struct{}{
+				"!room:server": {},
+			},
 		},
 	}
 }
@@ -529,6 +534,241 @@ func (m *slowOrch) Handle(ctx context.Context, _, _, _ string) ([]orchestrator.R
 		return m.responses, m.err
 	case <-ctx.Done():
 		return nil, ctx.Err()
+	}
+}
+
+// --- Room allowlist tests ---
+
+func TestIsRoomAllowedPopulated(t *testing.T) {
+	b := newTestBot(t, &mockOrch{}, &mockSender{}, "@bridge:server")
+	b.cfg.RoomAllowlist = map[id.RoomID]struct{}{
+		"!allowed:server": {},
+	}
+
+	if !b.isRoomAllowed("!allowed:server") {
+		t.Error("expected allowed room to be permitted")
+	}
+	if b.isRoomAllowed("!other:server") {
+		t.Error("expected disallowed room to be rejected")
+	}
+}
+
+func TestIsRoomAllowedEmpty(t *testing.T) {
+	b := newTestBot(t, &mockOrch{}, &mockSender{}, "@bridge:server")
+	b.cfg.RoomAllowlist = map[id.RoomID]struct{}{}
+
+	if b.isRoomAllowed("!any:server") {
+		t.Error("empty allowlist should deny all rooms (fail-closed)")
+	}
+}
+
+func TestIsRoomAllowedNil(t *testing.T) {
+	b := newTestBot(t, &mockOrch{}, &mockSender{}, "@bridge:server")
+	b.cfg.RoomAllowlist = nil
+
+	if b.isRoomAllowed("!any:server") {
+		t.Error("nil allowlist should deny all rooms (fail-closed)")
+	}
+}
+
+func TestMessageIgnoredForDisallowedRoom(t *testing.T) {
+	orch := &mockOrch{responses: []orchestrator.Response{{Text: "Aye"}}}
+	sender := &mockSender{}
+	b := newTestBot(t, orch, sender, "@bridge:server")
+	b.cfg.RoomAllowlist = map[id.RoomID]struct{}{
+		"!allowed:server": {},
+	}
+
+	b.handleMessage(t.Context(), textEvent("@captain:server", "!disallowed:server", "hull check"))
+
+	if len(orch.calls) != 0 {
+		t.Fatalf("expected 0 orchestrator calls for disallowed room, got %d", len(orch.calls))
+	}
+}
+
+func TestMessageAllowedRoom(t *testing.T) {
+	orch := &mockOrch{responses: []orchestrator.Response{{Text: "Aye", CrewID: "maren", Verbosity: "dispatch"}}}
+	sender := &mockSender{}
+	b := newTestBot(t, orch, sender, "@bridge:server")
+	b.cfg.RoomAllowlist = map[id.RoomID]struct{}{
+		"!allowed:server": {},
+	}
+
+	b.handleMessage(t.Context(), textEvent("@captain:server", "!allowed:server", "hull check"))
+
+	if len(orch.calls) != 1 {
+		t.Fatalf("expected 1 orchestrator call for allowed room, got %d", len(orch.calls))
+	}
+}
+
+func TestEnforceRoomAllowlist(t *testing.T) {
+	var leftRooms []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/joined_rooms"):
+			_, _ = w.Write([]byte(`{"joined_rooms":["!allowed:server","!disallowed:server"]}`))
+		case strings.HasSuffix(r.URL.Path, "/leave"):
+			// Extract room ID from /_matrix/client/v3/rooms/{roomID}/leave
+			parts := strings.Split(r.URL.Path, "/")
+			if len(parts) >= 2 {
+				decoded, _ := url.PathUnescape(parts[len(parts)-2])
+				leftRooms = append(leftRooms, decoded)
+			}
+			_, _ = w.Write([]byte(`{}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	client, err := mautrix.NewClient(srv.URL, "@bridge:server", "test-token")
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	b := &Bot{
+		client: client,
+		cfg: Config{
+			RoomAllowlist: map[id.RoomID]struct{}{
+				"!allowed:server": {},
+			},
+		},
+	}
+
+	b.enforceRoomAllowlist(t.Context())
+
+	if len(leftRooms) != 1 {
+		t.Fatalf("expected 1 leave call, got %d", len(leftRooms))
+	}
+	if leftRooms[0] != "!disallowed:server" {
+		t.Errorf("expected to leave !disallowed:server, left %q", leftRooms[0])
+	}
+}
+
+func TestInviteRejectedForDisallowedRoom(t *testing.T) {
+	var leftRooms []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasSuffix(r.URL.Path, "/leave") {
+			parts := strings.Split(r.URL.Path, "/")
+			if len(parts) >= 2 {
+				decoded, _ := url.PathUnescape(parts[len(parts)-2])
+				leftRooms = append(leftRooms, decoded)
+			}
+			_, _ = w.Write([]byte(`{}`))
+		} else {
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	client, err := mautrix.NewClient(srv.URL, "@bridge:server", "test-token")
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	b := &Bot{
+		client: client,
+		cfg: Config{
+			RoomAllowlist: map[id.RoomID]struct{}{
+				"!allowed:server": {},
+			},
+		},
+	}
+	b.registerHandlers()
+
+	// Simulate an invite event for a disallowed room.
+	evt := &event.Event{
+		Sender: id.UserID("@attacker:server"),
+		RoomID: id.RoomID("!evil:server"),
+		Type:   event.StateMember,
+	}
+	evt.Content.Parsed = &event.MemberEventContent{
+		Membership: event.MembershipInvite,
+	}
+	stateKey := "@bridge:server"
+	evt.StateKey = &stateKey
+
+	syncer := client.Syncer.(*mautrix.DefaultSyncer)
+	syncer.ProcessResponse(t.Context(), &mautrix.RespSync{
+		Rooms: mautrix.RespSyncRooms{
+			Invite: map[id.RoomID]*mautrix.SyncInvitedRoom{
+				"!evil:server": {
+					State: mautrix.SyncEventsList{
+						Events: []*event.Event{evt},
+					},
+				},
+			},
+		},
+	}, "")
+
+	if len(leftRooms) != 1 {
+		t.Fatalf("expected 1 leave call (reject invite), got %d", len(leftRooms))
+	}
+	if leftRooms[0] != "!evil:server" {
+		t.Errorf("expected to reject !evil:server, rejected %q", leftRooms[0])
+	}
+}
+
+func TestInviteAcceptedForAllowedRoom(t *testing.T) {
+	var joinedRooms []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasSuffix(r.URL.Path, "/join") {
+			parts := strings.Split(r.URL.Path, "/")
+			if len(parts) >= 2 {
+				decoded, _ := url.PathUnescape(parts[len(parts)-2])
+				joinedRooms = append(joinedRooms, decoded)
+			}
+			_, _ = w.Write([]byte(`{"room_id":"` + joinedRooms[len(joinedRooms)-1] + `"}`))
+		} else {
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	client, err := mautrix.NewClient(srv.URL, "@bridge:server", "test-token")
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	b := &Bot{
+		client: client,
+		cfg: Config{
+			RoomAllowlist: map[id.RoomID]struct{}{
+				"!welcome:server": {},
+			},
+		},
+	}
+	b.registerHandlers()
+
+	evt := &event.Event{
+		Sender: id.UserID("@captain:server"),
+		RoomID: id.RoomID("!welcome:server"),
+		Type:   event.StateMember,
+	}
+	evt.Content.Parsed = &event.MemberEventContent{
+		Membership: event.MembershipInvite,
+	}
+	stateKey := "@bridge:server"
+	evt.StateKey = &stateKey
+
+	syncer := client.Syncer.(*mautrix.DefaultSyncer)
+	syncer.ProcessResponse(t.Context(), &mautrix.RespSync{
+		Rooms: mautrix.RespSyncRooms{
+			Invite: map[id.RoomID]*mautrix.SyncInvitedRoom{
+				"!welcome:server": {
+					State: mautrix.SyncEventsList{
+						Events: []*event.Event{evt},
+					},
+				},
+			},
+		},
+	}, "")
+
+	if len(joinedRooms) != 1 {
+		t.Fatalf("expected 1 join call, got %d", len(joinedRooms))
+	}
+	if joinedRooms[0] != "!welcome:server" {
+		t.Errorf("expected to join !welcome:server, joined %q", joinedRooms[0])
 	}
 }
 
