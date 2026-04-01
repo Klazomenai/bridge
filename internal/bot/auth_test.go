@@ -107,9 +107,9 @@ func TestCrewIDsReturnsNonWildcard(t *testing.T) {
 	if len(ids) != len(expected) {
 		t.Fatalf("expected %v, got %v", expected, ids)
 	}
-	for i, id := range ids {
-		if id != expected[i] {
-			t.Errorf("expected %q at index %d, got %q", expected[i], i, id)
+	for i, crewID := range ids {
+		if crewID != expected[i] {
+			t.Errorf("expected %q at index %d, got %q", expected[i], i, crewID)
 		}
 	}
 }

@@ -59,8 +59,13 @@ func (b *Bot) handleMessage(ctx context.Context, evt *event.Event) {
 		effectiveCrew = b.cfg.DefaultCrew
 	}
 	if !b.cfg.UserAuth.IsAuthorized(evt.Sender, effectiveCrew) {
-		slog.Warn("bot: unauthorized crew access",
-			"sender", evt.Sender, "crew", effectiveCrew, "room", evt.RoomID)
+		if b.cfg.UserAuth == nil || b.cfg.UserAuth.Len() == 0 {
+			slog.Debug("bot: auth disabled; rejecting crew access",
+				"sender", evt.Sender, "crew", effectiveCrew, "room", evt.RoomID)
+		} else {
+			slog.Warn("bot: unauthorized crew access",
+				"sender", evt.Sender, "crew", effectiveCrew, "room", evt.RoomID)
+		}
 		return
 	}
 
