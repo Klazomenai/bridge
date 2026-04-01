@@ -66,7 +66,7 @@ func (b *Bot) handleMessage(ctx context.Context, evt *event.Event) {
 
 	slog.Info("bot: message received",
 		"room", evt.RoomID, "sender", evt.Sender,
-		"crew_request", requestedCrew)
+		"crew_request", requestedCrew, "crew_effective", effectiveCrew)
 
 	handleCtx, cancel := context.WithTimeout(ctx, handleTimeout)
 	defer cancel()
