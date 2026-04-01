@@ -74,7 +74,7 @@ func (b *Bot) handleMessage(ctx context.Context, evt *event.Event) {
 	// Run orchestrator in a goroutine; send typing indicator while waiting.
 	ch := make(chan orchResult, 1)
 	go func() {
-		responses, err := b.orch.Handle(handleCtx, string(evt.RoomID), text, requestedCrew)
+		responses, err := b.orch.Handle(handleCtx, string(evt.RoomID), text, effectiveCrew)
 		ch <- orchResult{responses, err}
 	}()
 

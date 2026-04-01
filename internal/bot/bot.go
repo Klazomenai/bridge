@@ -37,10 +37,10 @@ type Config struct {
 	Homeserver    string
 	Username      string
 	Password      string
-	CryptoDBPath  string              // path to SQLite DB for E2EE key persistence (PVC)
-	PickleKey     string              // secret used to encrypt the olm account on disk
+	CryptoDBPath  string // path to SQLite DB for E2EE key persistence (PVC)
+	PickleKey     string // secret used to encrypt the olm account on disk
 	DisplayName   string
-	KnownCrew     []string                // crew IDs loaded from registry — used for routing
+	KnownCrew     []string               // crew IDs loaded from registry — used for routing
 	RoomAllowlist map[id.RoomID]struct{} // permitted rooms — empty = deny all (fail-closed)
 	UserAuth      *UserAuthorization     // per-user crew authorization — nil = deny all (fail-closed)
 	DefaultCrew   string                 // default crew ID for unprefixed messages
