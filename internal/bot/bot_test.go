@@ -334,6 +334,10 @@ func newTestBotWithTyper(t *testing.T, orch OrchestratorI, sender Sender, typer 
 			RoomAllowlist: map[id.RoomID]struct{}{
 				"!room:server": {},
 			},
+			DefaultCrew: "maren",
+			UserAuth: &UserAuthorization{users: map[id.UserID]*crewPermission{
+				"@captain:server": {all: true},
+			}},
 		},
 	}
 }
@@ -771,6 +775,96 @@ func TestInviteAcceptedForAllowedRoom(t *testing.T) {
 	}
 	if joinedRooms[0] != "!welcome:server" {
 		t.Errorf("expected to join !welcome:server, joined %q", joinedRooms[0])
+	}
+}
+
+// --- Per-user authorization tests ---
+
+func TestMessageDeniedUnauthorizedUser(t *testing.T) {
+	orch := &mockOrch{responses: []orchestrator.Response{{Text: "Aye"}}}
+	sender := &mockSender{}
+	b := newTestBot(t, orch, sender, "@bridge:server")
+	// Default test bot authorizes @captain:server with wildcard.
+	// Send from an unauthorized user.
+	b.handleMessage(t.Context(), textEvent("@stranger:server", "!room:server", "hull check"))
+
+	if len(orch.calls) != 0 {
+		t.Fatalf("expected 0 orchestrator calls for unauthorized user, got %d", len(orch.calls))
+	}
+}
+
+func TestMessageAllowedAuthorizedUser(t *testing.T) {
+	orch := &mockOrch{responses: []orchestrator.Response{{Text: "Aye", CrewID: "maren", Verbosity: "dispatch"}}}
+	sender := &mockSender{}
+	b := newTestBot(t, orch, sender, "@bridge:server")
+
+	b.handleMessage(t.Context(), textEvent("@captain:server", "!room:server", "hull check"))
+
+	if len(orch.calls) != 1 {
+		t.Fatalf("expected 1 orchestrator call for authorized user, got %d", len(orch.calls))
+	}
+}
+
+func TestMessageAllowedWildcardUser(t *testing.T) {
+	orch := &mockOrch{responses: []orchestrator.Response{{Text: "Signal received.", CrewID: "crest", Verbosity: "dispatch"}}}
+	sender := &mockSender{}
+	b := newTestBot(t, orch, sender, "@bridge:server")
+
+	// Captain has wildcard — should access any crew.
+	b.handleMessage(t.Context(), textEvent("@captain:server", "!room:server", "Crest, check the inbox"))
+
+	if len(orch.calls) != 1 {
+		t.Fatalf("expected 1 orchestrator call, got %d", len(orch.calls))
+	}
+	if orch.crewRequests[0] != "crest" {
+		t.Errorf("expected crew request crest, got %q", orch.crewRequests[0])
+	}
+}
+
+func TestMessageDeniedWrongCrew(t *testing.T) {
+	orch := &mockOrch{responses: []orchestrator.Response{{Text: "Aye"}}}
+	sender := &mockSender{}
+	b := newTestBot(t, orch, sender, "@bridge:server")
+	// Override auth: officer only authorized for crest.
+	b.cfg.UserAuth = &UserAuthorization{users: map[id.UserID]*crewPermission{
+		"@officer:server": {crew: map[string]struct{}{"crest": {}}},
+	}}
+
+	// Officer sends unprefixed message — routes to default (maren), not authorized.
+	b.handleMessage(t.Context(), textEvent("@officer:server", "!room:server", "hull check"))
+
+	if len(orch.calls) != 0 {
+		t.Fatalf("expected 0 orchestrator calls for wrong crew, got %d", len(orch.calls))
+	}
+}
+
+func TestMessageAllowedDefaultCrewExplicit(t *testing.T) {
+	orch := &mockOrch{responses: []orchestrator.Response{{Text: "Aye", CrewID: "maren", Verbosity: "dispatch"}}}
+	sender := &mockSender{}
+	b := newTestBot(t, orch, sender, "@bridge:server")
+	// Override auth: officer authorized for maren (default crew).
+	b.cfg.UserAuth = &UserAuthorization{users: map[id.UserID]*crewPermission{
+		"@officer:server": {crew: map[string]struct{}{"maren": {}}},
+	}}
+
+	// Unprefixed message routes to default crew (maren) — should be authorized.
+	b.handleMessage(t.Context(), textEvent("@officer:server", "!room:server", "hull check"))
+
+	if len(orch.calls) != 1 {
+		t.Fatalf("expected 1 orchestrator call, got %d", len(orch.calls))
+	}
+}
+
+func TestAuthNilDeniesAll(t *testing.T) {
+	orch := &mockOrch{responses: []orchestrator.Response{{Text: "Aye"}}}
+	sender := &mockSender{}
+	b := newTestBot(t, orch, sender, "@bridge:server")
+	b.cfg.UserAuth = nil // nil = not configured = deny all
+
+	b.handleMessage(t.Context(), textEvent("@captain:server", "!room:server", "hull check"))
+
+	if len(orch.calls) != 0 {
+		t.Fatalf("expected 0 orchestrator calls with nil auth (fail-closed), got %d", len(orch.calls))
 	}
 }
 

@@ -162,6 +162,27 @@ func main() {
 		os.Exit(1)
 	}
 
+	// --- User authorization ---
+	authPath := mustEnv("MATRIX_AUTH_PATH", "")
+	userAuth, err := bot.LoadAuth(authPath)
+	if err != nil {
+		slog.Error("failed to load auth config", "path", authPath, "err", err)
+		os.Exit(1)
+	}
+	if userAuth != nil {
+		knownCrew := registry.IDs()
+		knownSet := make(map[string]struct{}, len(knownCrew))
+		for _, c := range knownCrew {
+			knownSet[c] = struct{}{}
+		}
+		for _, c := range userAuth.CrewIDs() {
+			if _, ok := knownSet[c]; !ok {
+				slog.Error("auth config references unknown crew", "crew", c)
+				os.Exit(1)
+			}
+		}
+	}
+
 	// --- Session context manager ---
 	ctxManager := ctxbuf.NewManager(ctxbuf.DefaultMaxTurns)
 
@@ -178,6 +199,8 @@ func main() {
 		DisplayName:   "Bridge",
 		KnownCrew:     registry.IDs(),
 		RoomAllowlist: parseRoomAllowlist(os.Getenv("MATRIX_ROOM_ALLOWLIST")),
+		UserAuth:      userAuth,
+		DefaultCrew:   registry.DefaultID(),
 	}
 	if botCfg.Homeserver == "" || botCfg.Username == "" || botCfg.Password == "" || botCfg.PickleKey == "" {
 		slog.Error("MATRIX_HOMESERVER, MATRIX_USERNAME, MATRIX_PASSWORD, and PICKLE_KEY are required")

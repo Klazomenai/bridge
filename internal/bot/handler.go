@@ -53,9 +53,25 @@ func (b *Bot) handleMessage(ctx context.Context, evt *event.Event) {
 
 	requestedCrew := extractCrewRequest(text, b.cfg.KnownCrew)
 
+	// Per-user authorization: check sender is permitted for the target crew.
+	effectiveCrew := requestedCrew
+	if effectiveCrew == "" {
+		effectiveCrew = b.cfg.DefaultCrew
+	}
+	if !b.cfg.UserAuth.IsAuthorized(evt.Sender, effectiveCrew) {
+		if b.cfg.UserAuth == nil || b.cfg.UserAuth.Len() == 0 {
+			slog.Debug("bot: auth disabled; rejecting crew access",
+				"sender", evt.Sender, "crew", effectiveCrew, "room", evt.RoomID)
+		} else {
+			slog.Warn("bot: unauthorized crew access",
+				"sender", evt.Sender, "crew", effectiveCrew, "room", evt.RoomID)
+		}
+		return
+	}
+
 	slog.Info("bot: message received",
 		"room", evt.RoomID, "sender", evt.Sender,
-		"crew_request", requestedCrew)
+		"crew_request", requestedCrew, "crew_effective", effectiveCrew)
 
 	handleCtx, cancel := context.WithTimeout(ctx, handleTimeout)
 	defer cancel()
@@ -63,7 +79,7 @@ func (b *Bot) handleMessage(ctx context.Context, evt *event.Event) {
 	// Run orchestrator in a goroutine; send typing indicator while waiting.
 	ch := make(chan orchResult, 1)
 	go func() {
-		responses, err := b.orch.Handle(handleCtx, string(evt.RoomID), text, requestedCrew)
+		responses, err := b.orch.Handle(handleCtx, string(evt.RoomID), text, effectiveCrew)
 		ch <- orchResult{responses, err}
 	}()
 
