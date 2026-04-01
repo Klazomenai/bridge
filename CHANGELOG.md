@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.1.0-alpha.1](https://github.com/Klazomenai/bridge/compare/v0.1.0-alpha...v0.1.0-alpha.1) (2026-04-01)
+
+
+### ⛵ New Rigging
+
+* **health:** add /healthz and /readyz HTTP endpoints for K8s probes ⛵ ([#96](https://github.com/Klazomenai/bridge/issues/96)) ([f0e48b1](https://github.com/Klazomenai/bridge/commit/f0e48b1c90188d825c4b69af4237affc3a9a939d))
+
+
+### 🔧 Hull Repairs
+
+* prepend crew metadata body prefix for deck-chat compatibility 🐛 ([#74](https://github.com/Klazomenai/bridge/issues/74)) ([cf362f3](https://github.com/Klazomenai/bridge/commit/cf362f3c60d248afc31025b12d32503504a71bab)), closes [#73](https://github.com/Klazomenai/bridge/issues/73)
+
+
+### 🔐 Battened Hatches
+
+* **bot:** add room allowlist to reject unsolicited invitations 🔐 ([#97](https://github.com/Klazomenai/bridge/issues/97)) ([994b791](https://github.com/Klazomenai/bridge/commit/994b79111c931673f3732b60f81d74994ccb22bb))
+* **bot:** enforce per-user authorization for crew commands 🔐 ([#98](https://github.com/Klazomenai/bridge/issues/98)) ([5a87da0](https://github.com/Klazomenai/bridge/commit/5a87da0f4b141a605605832fbe15426e958c0cee))
+
 ## [0.1.0-alpha](https://github.com/Klazomenai/bridge/compare/v0.0.1...v0.1.0-alpha) (2026-03-29)
 
 
