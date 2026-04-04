@@ -18,9 +18,10 @@ RUN CGO_ENABLED=0 go build -tags goolm -trimpath \
 # version-pinned per security skill guidance.
 FROM alpine:3.21
 
-# Non-root user — UID 65532 matches existing deployment securityContext
+# Non-root user — UID/GID 65532 matches existing deployment securityContext
 # (runAsUser, runAsGroup, fsGroup) so no Helm chart changes needed.
-RUN adduser -D -u 65532 -g 65532 bridge
+RUN addgroup -g 65532 bridge && \
+    adduser -D -u 65532 -G bridge bridge
 
 # kubectl and helm — pinned versions, compatible with GKE RAPID channel.
 # curl removed after install to minimise attack surface.
@@ -28,9 +29,18 @@ ARG KUBECTL_VERSION=v1.33.4
 ARG HELM_VERSION=v3.11.1
 RUN apk add --no-cache ca-certificates curl && \
     curl -fsSL "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" \
-      -o /usr/local/bin/kubectl && chmod +x /usr/local/bin/kubectl && \
-    curl -fsSL "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz" | \
-      tar xz -C /usr/local/bin --strip-components=1 linux-amd64/helm && \
+      -o /tmp/kubectl && \
+    curl -fsSL "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl.sha256" \
+      -o /tmp/kubectl.sha256 && \
+    echo "$(cat /tmp/kubectl.sha256)  /tmp/kubectl" | sha256sum -c - && \
+    install -m 0755 /tmp/kubectl /usr/local/bin/kubectl && \
+    curl -fsSL "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz" \
+      -o /tmp/helm.tar.gz && \
+    curl -fsSL "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz.sha256sum" \
+      -o /tmp/helm.sha256sum && \
+    sed 's# linux-amd64.tar.gz#  /tmp/helm.tar.gz#' /tmp/helm.sha256sum | sha256sum -c - && \
+    tar xzf /tmp/helm.tar.gz -C /usr/local/bin --strip-components=1 linux-amd64/helm && \
+    rm -f /tmp/kubectl /tmp/kubectl.sha256 /tmp/helm.tar.gz /tmp/helm.sha256sum && \
     apk del curl
 
 # Same directory structure as previous distroless build — kubelet mounts
