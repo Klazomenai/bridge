@@ -38,7 +38,7 @@ RUN apk add --no-cache ca-certificates curl && \
       -o /tmp/helm.tar.gz && \
     curl -fsSL "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz.sha256sum" \
       -o /tmp/helm.sha256sum && \
-    sed 's# linux-amd64.tar.gz#  /tmp/helm.tar.gz#' /tmp/helm.sha256sum | sha256sum -c - && \
+    awk '{print $1 "  /tmp/helm.tar.gz"}' /tmp/helm.sha256sum | sha256sum -c - && \
     tar xzf /tmp/helm.tar.gz -C /usr/local/bin --strip-components=1 linux-amd64/helm && \
     rm -f /tmp/kubectl /tmp/kubectl.sha256 /tmp/helm.tar.gz /tmp/helm.sha256sum && \
     apk del curl
