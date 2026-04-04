@@ -24,8 +24,8 @@ RUN adduser -D -u 65532 -g 65532 bridge
 
 # kubectl and helm — pinned versions, compatible with GKE RAPID channel.
 # curl removed after install to minimise attack surface.
-ARG KUBECTL_VERSION=v1.32.3
-ARG HELM_VERSION=v3.17.3
+ARG KUBECTL_VERSION=v1.33.4
+ARG HELM_VERSION=v3.11.1
 RUN apk add --no-cache ca-certificates curl && \
     curl -fsSL "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" \
       -o /usr/local/bin/kubectl && chmod +x /usr/local/bin/kubectl && \
