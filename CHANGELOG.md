@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.2](https://github.com/Klazomenai/bridge/compare/v0.1.0-alpha.1...v0.1.0-alpha.2) (2026-04-04)
+
+
+### ⛵ New Rigging
+
+* swap distroless for Alpine with kubectl and helm ⛵ ([#102](https://github.com/Klazomenai/bridge/issues/102)) ([0b5eb7e](https://github.com/Klazomenai/bridge/commit/0b5eb7e78f66bdbe1497318d656c17cbedc99fe7))
+
 ## [0.1.0-alpha.1](https://github.com/Klazomenai/bridge/compare/v0.1.0-alpha...v0.1.0-alpha.1) (2026-04-01)
 
 
