@@ -23,24 +23,23 @@ FROM alpine:3.21
 RUN addgroup -g 65532 bridge && \
     adduser -D -u 65532 -G bridge bridge
 
-# kubectl and helm — pinned versions, compatible with GKE RAPID channel.
+# kubectl and helm — pinned versions and SHA256 hashes for supply-chain integrity.
+# Hashes are verified locally; no trust placed on upstream checksum endpoints.
 # curl removed after install to minimise attack surface.
 ARG KUBECTL_VERSION=v1.33.4
+ARG KUBECTL_SHA256=c2ba72c115d524b72aaee9aab8df8b876e1596889d2f3f27d68405262ce86ca1
 ARG HELM_VERSION=v3.11.1
+ARG HELM_SHA256=0b1be96b66fab4770526f136f5f1a385a47c41923d33aab0dcb500e0f6c1bf7c
 RUN apk add --no-cache ca-certificates curl && \
     curl -fsSL "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" \
       -o /tmp/kubectl && \
-    curl -fsSL "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl.sha256" \
-      -o /tmp/kubectl.sha256 && \
-    echo "$(cat /tmp/kubectl.sha256)  /tmp/kubectl" | sha256sum -c - && \
+    echo "${KUBECTL_SHA256}  /tmp/kubectl" | sha256sum -c - && \
     install -m 0755 /tmp/kubectl /usr/local/bin/kubectl && \
     curl -fsSL "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz" \
       -o /tmp/helm.tar.gz && \
-    curl -fsSL "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz.sha256sum" \
-      -o /tmp/helm.sha256sum && \
-    awk '{print $1 "  /tmp/helm.tar.gz"}' /tmp/helm.sha256sum | sha256sum -c - && \
+    echo "${HELM_SHA256}  /tmp/helm.tar.gz" | sha256sum -c - && \
     tar xzf /tmp/helm.tar.gz -C /usr/local/bin --strip-components=1 linux-amd64/helm && \
-    rm -f /tmp/kubectl /tmp/kubectl.sha256 /tmp/helm.tar.gz /tmp/helm.sha256sum && \
+    rm -f /tmp/kubectl /tmp/helm.tar.gz && \
     apk del curl
 
 # Same directory structure as previous distroless build — kubelet mounts
