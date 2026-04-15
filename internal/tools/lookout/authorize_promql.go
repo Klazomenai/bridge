@@ -99,32 +99,46 @@ func checkNamespaceMatcher(m *labels.Matcher, allowlist *NamespaceAllowlist) err
 	return fmt.Errorf("lookout: unsupported namespace matcher type %v", m.Type)
 }
 
+// unsafeRegexFlags are the inline flag directives a caller must NOT be able to
+// introduce via an in-regex `(?flags)` construct. Case-folding lets "(?i)matrix"
+// widen the match beyond "matrix" at the backend even though our literal
+// extraction collapses it to a single rune-string; DotNL and NonGreedy are
+// meaningless for literals but rejecting them pre-empts accidental
+// interactions with future regex-construct support.
+const unsafeRegexFlags = syntax.FoldCase | syntax.DotNL | syntax.NonGreedy | syntax.Literal
+
 // checkNamespaceRegex verifies the regex is a literal anchored alternation of
-// allowlisted values.
+// allowlisted values with no user-supplied inline flag directives.
 //
 // Prometheus implicitly anchors all label regex matchers with ^(?: ... )$,
 // matching the whole label value. We parse the user-supplied regex, require
-// it to be a simple alternation (or a single literal), and verify every
-// alternative is a plain string in the allowlist.
+// it to be a simple alternation (or a single literal) with no non-default
+// flags, and verify every alternative is a plain string in the allowlist.
 //
-// This rejects:
-//   - ".*", ".+", "^.*$" (wildcards — unbounded)
-//   - "ma.*", "ma.+" (partial wildcards)
-//   - "matrix|.*" (wildcard alternative)
-//   - "[a-z]+" (character classes)
-//   - "(?i)matrix" (flags)
-//   - ".{1,10}" (repetition)
+// Rejected:
+//   - ".*", ".+", "^.*$"         (wildcards — unbounded)
+//   - "ma.*", "ma.+"             (partial wildcards)
+//   - "matrix|.*"                (wildcard alternative)
+//   - "[a-z]+"                   (character classes)
+//   - "(?i)matrix"               (case-insensitive flag — the upstream parser
+//                                 normalises runes to upper-case when FoldCase
+//                                 is set, so literal extraction would miss the
+//                                 widened match at the backend)
+//   - "(?i:foo)bar"              (flag on a sub-group)
+//   - "matrix(?i)argocd"         (flag mid-expression)
+//   - ".{1,10}"                  (repetition)
 //
-// It accepts:
-//   - "matrix"       (single literal)
-//   - "matrix|argocd" (literal alternation, all entries allowlisted)
-//   - "(matrix|argocd)" (parenthesised alternation)
+// Accepted:
+//   - "matrix"                   (single literal)
+//   - "matrix|argocd"            (literal alternation, all entries allowlisted)
+//   - "(matrix|argocd)"          (parenthesised alternation)
 func checkNamespaceRegex(pattern string, allowlist *NamespaceAllowlist) error {
-	// Parse in POSIX-flavour (closest to Prometheus' RE2). Prometheus uses
-	// grafana/regexp which is a fork of Go stdlib regexp/syntax semantics.
 	re, err := syntax.Parse(pattern, syntax.Perl)
 	if err != nil {
 		return fmt.Errorf("lookout: invalid namespace regex %q: %w", pattern, err)
+	}
+	if err := checkNoUnsafeFlags(re); err != nil {
+		return fmt.Errorf("lookout: namespace regex %q rejected: %w", pattern, err)
 	}
 	values, err := extractLiterals(re)
 	if err != nil {
@@ -133,6 +147,27 @@ func checkNamespaceRegex(pattern string, allowlist *NamespaceAllowlist) error {
 	for _, v := range values {
 		if !allowlist.Contains(v) {
 			return fmt.Errorf("lookout: namespace %q (from regex %q) not in allowlist %v", v, pattern, allowlist.Names())
+		}
+	}
+	return nil
+}
+
+// checkNoUnsafeFlags walks a parsed regex tree and returns an error if any
+// node — root, intermediate group, or leaf literal — carries a user-controlled
+// inline flag from unsafeRegexFlags.
+//
+// Go's regexp/syntax parser propagates inline-flag directives to the AST
+// nodes they apply to. For a literal the flag can appear on the leaf (e.g.
+// `matrix(?i)argocd` tags only the "ARGOCD" OpLiteral, NOT the parent
+// OpConcat). A top-level-only check would therefore miss mid-expression
+// flag directives; we must recurse.
+func checkNoUnsafeFlags(re *syntax.Regexp) error {
+	if re.Flags&unsafeRegexFlags != 0 {
+		return fmt.Errorf("inline flag directive not permitted (flags 0x%x)", re.Flags&unsafeRegexFlags)
+	}
+	for _, sub := range re.Sub {
+		if err := checkNoUnsafeFlags(sub); err != nil {
+			return err
 		}
 	}
 	return nil

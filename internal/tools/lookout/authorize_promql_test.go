@@ -153,6 +153,50 @@ func TestAuthorizePromQL_RegexWithFlags(t *testing.T) {
 	}
 }
 
+// TestAuthorizePromQL_RegexFoldCaseBypassAttempt defends against the subtle
+// case-fold bypass Copilot flagged on PR #108: (?i)matrix parses to an
+// OpLiteral with Rune="MATRIX" and FoldCase=true. A naive literal-equality
+// check against the allowlist accidentally rejects this because "MATRIX" is
+// not in a typical lowercase allowlist — but if an uppercase value IS in the
+// allowlist, the fold-case widens the backend match to ALL case variants.
+// The explicit flag check protects against this regardless of allowlist
+// contents.
+func TestAuthorizePromQL_RegexFoldCaseBypassAttempt(t *testing.T) {
+	upperAllow := lookout.NewNamespaceAllowlist([]string{"MATRIX"})
+	err := lookout.AuthorizePromQL(`up{namespace=~"(?i)matrix"}`, upperAllow)
+	if err == nil {
+		t.Error("expected rejection for case-fold flag even when uppercase value is allowlisted")
+	}
+}
+
+// TestAuthorizePromQL_RegexFlagOnSubgroup probes `(?i:foo)bar` — the flag
+// applies only to the sub-group. Go's parser puts FoldCase on the leaf
+// OpLiteral "FOO" but leaves the sibling "bar" clean. The recursive walker
+// must still reject.
+func TestAuthorizePromQL_RegexFlagOnSubgroup(t *testing.T) {
+	if err := lookout.AuthorizePromQL(`up{namespace=~"(?i:matrix)argocd"}`, promAllowlist()); err == nil {
+		t.Error("expected rejection for flag on sub-group")
+	}
+}
+
+// TestAuthorizePromQL_RegexFlagMidExpression probes `matrix(?i)argocd`
+// where the flag only tags later literals. The parent OpConcat has clean
+// flags; only the second leaf OpLiteral is tagged. The recursive walker
+// must still reject.
+func TestAuthorizePromQL_RegexFlagMidExpression(t *testing.T) {
+	if err := lookout.AuthorizePromQL(`up{namespace=~"matrix(?i)argocd"}`, promAllowlist()); err == nil {
+		t.Error("expected rejection for mid-expression flag directive")
+	}
+}
+
+// TestAuthorizePromQL_RegexDotNLFlag probes `(?s)` — makes `.` match
+// newlines. Irrelevant for literals but the flag check rejects it pre-emptively.
+func TestAuthorizePromQL_RegexDotNLFlag(t *testing.T) {
+	if err := lookout.AuthorizePromQL(`up{namespace=~"(?s)matrix"}`, promAllowlist()); err == nil {
+		t.Error("expected rejection for (?s) flag")
+	}
+}
+
 // --- rejection: non-allowlisted value ---
 
 func TestAuthorizePromQL_EqualityNotInAllowlist(t *testing.T) {
