@@ -23,8 +23,8 @@ import (
 	"klazomenai/bridge/internal/health"
 	"klazomenai/bridge/internal/orchestrator"
 	"klazomenai/bridge/internal/tools"
-	cresttools "klazomenai/bridge/internal/tools/crest"
 	chipstools "klazomenai/bridge/internal/tools/chips"
+	cresttools "klazomenai/bridge/internal/tools/crest"
 	lookouttools "klazomenai/bridge/internal/tools/lookout"
 	marentools "klazomenai/bridge/internal/tools/maren"
 )
@@ -108,19 +108,34 @@ func main() {
 	}
 
 	// --- Lookout tools ---
-	if promURL := os.Getenv("PROMETHEUS_URL"); promURL != "" {
-		toolReg.Register(lookouttools.NewPrometheusQueryTool(promURL, lookouttools.DefaultHTTPClient()))
-		slog.Info("lookout: prometheus_query registered", "url", promURL)
-	} else {
+	// Both prometheus_query and loki_query require a non-empty
+	// LOOKOUT_NAMESPACE_ALLOWLIST to enforce per-namespace query scoping
+	// (see bridge#80). If the allowlist is missing, the tools register as
+	// stubs even when the backend URL is set, failing closed.
+	lookoutAllowlist := lookouttools.ParseNamespaceAllowlist(os.Getenv("LOOKOUT_NAMESPACE_ALLOWLIST"))
+	promURL := os.Getenv("PROMETHEUS_URL")
+	lokiURL := os.Getenv("LOKI_URL")
+	switch {
+	case promURL == "":
 		toolReg.Register(tools.NewStubTool("prometheus_query", "Query Prometheus metrics (PROMETHEUS_URL not set)"))
 		slog.Info("lookout: prometheus_query registered as stub (PROMETHEUS_URL not set)")
+	case lookoutAllowlist.Len() == 0:
+		toolReg.Register(tools.NewStubTool("prometheus_query", "Query Prometheus metrics (LOOKOUT_NAMESPACE_ALLOWLIST not set or empty)"))
+		slog.Warn("lookout: prometheus_query registered as stub (LOOKOUT_NAMESPACE_ALLOWLIST not set or empty)")
+	default:
+		toolReg.Register(lookouttools.NewPrometheusQueryTool(promURL, lookoutAllowlist, lookouttools.DefaultHTTPClient()))
+		slog.Info("lookout: prometheus_query registered", "url", promURL, "namespaces", lookoutAllowlist.Names())
 	}
-	if lokiURL := os.Getenv("LOKI_URL"); lokiURL != "" {
-		toolReg.Register(lookouttools.NewLokiQueryTool(lokiURL, lookouttools.DefaultHTTPClient()))
-		slog.Info("lookout: loki_query registered", "url", lokiURL)
-	} else {
+	switch {
+	case lokiURL == "":
 		toolReg.Register(tools.NewStubTool("loki_query", "Query Loki logs (LOKI_URL not set)"))
 		slog.Info("lookout: loki_query registered as stub (LOKI_URL not set)")
+	case lookoutAllowlist.Len() == 0:
+		toolReg.Register(tools.NewStubTool("loki_query", "Query Loki logs (LOOKOUT_NAMESPACE_ALLOWLIST not set or empty)"))
+		slog.Warn("lookout: loki_query registered as stub (LOOKOUT_NAMESPACE_ALLOWLIST not set or empty)")
+	default:
+		toolReg.Register(lookouttools.NewLokiQueryTool(lokiURL, lookoutAllowlist, lookouttools.DefaultHTTPClient()))
+		slog.Info("lookout: loki_query registered", "url", lokiURL, "namespaces", lookoutAllowlist.Names())
 	}
 
 	// --- Chips tools ---

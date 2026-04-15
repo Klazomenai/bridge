@@ -19,6 +19,13 @@ func mustJSON(t *testing.T, v any) json.RawMessage {
 	return b
 }
 
+// testAllowlist returns a namespace allowlist covering the names used in the
+// existing integration tests. Authorization unit tests live in
+// authorize_promql_test.go and authorize_logql_test.go.
+func testAllowlist() *lookout.NamespaceAllowlist {
+	return lookout.NewNamespaceAllowlist([]string{"matrix", "monitoring", "default"})
+}
+
 // --- PrometheusQueryTool tests ---
 
 func TestPrometheusQuerySuccess(t *testing.T) {
@@ -26,7 +33,7 @@ func TestPrometheusQuerySuccess(t *testing.T) {
 		if r.URL.Path != "/api/v1/query" {
 			t.Errorf("unexpected path: %s", r.URL.Path)
 		}
-		if r.URL.Query().Get("query") != "up{job=\"node\"}" {
+		if r.URL.Query().Get("query") != `up{namespace="matrix",job="node"}` {
 			t.Errorf("unexpected query param: %s", r.URL.Query().Get("query"))
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -34,8 +41,8 @@ func TestPrometheusQuerySuccess(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	tool := lookout.NewPrometheusQueryTool(srv.URL, srv.Client())
-	input := mustJSON(t, map[string]string{"query": "up{job=\"node\"}"})
+	tool := lookout.NewPrometheusQueryTool(srv.URL, testAllowlist(), srv.Client())
+	input := mustJSON(t, map[string]string{"query": `up{namespace="matrix",job="node"}`})
 	out, err := tool.Execute(t.Context(), input)
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
@@ -55,8 +62,8 @@ func TestPrometheusQueryWithTime(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	tool := lookout.NewPrometheusQueryTool(srv.URL, srv.Client())
-	input := mustJSON(t, map[string]string{"query": "up", "time": "2026-03-28T12:00:00Z"})
+	tool := lookout.NewPrometheusQueryTool(srv.URL, testAllowlist(), srv.Client())
+	input := mustJSON(t, map[string]string{"query": `up{namespace="matrix"}`, "time": "2026-03-28T12:00:00Z"})
 	_, err := tool.Execute(t.Context(), input)
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
@@ -64,7 +71,7 @@ func TestPrometheusQueryWithTime(t *testing.T) {
 }
 
 func TestPrometheusQueryEmptyQuery(t *testing.T) {
-	tool := lookout.NewPrometheusQueryTool("http://localhost:9090", lookout.DefaultHTTPClient())
+	tool := lookout.NewPrometheusQueryTool("http://localhost:9090", testAllowlist(), lookout.DefaultHTTPClient())
 	input := mustJSON(t, map[string]string{"query": ""})
 	_, err := tool.Execute(t.Context(), input)
 	if err == nil {
@@ -79,8 +86,8 @@ func TestPrometheusQueryHTTPError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	tool := lookout.NewPrometheusQueryTool(srv.URL, srv.Client())
-	input := mustJSON(t, map[string]string{"query": "up"})
+	tool := lookout.NewPrometheusQueryTool(srv.URL, testAllowlist(), srv.Client())
+	input := mustJSON(t, map[string]string{"query": `up{namespace="matrix"}`})
 	_, err := tool.Execute(t.Context(), input)
 	if err == nil {
 		t.Fatal("expected error for 500 response")
@@ -91,7 +98,7 @@ func TestPrometheusQueryHTTPError(t *testing.T) {
 }
 
 func TestPrometheusQueryInterface(t *testing.T) {
-	tool := lookout.NewPrometheusQueryTool("http://localhost:9090", lookout.DefaultHTTPClient())
+	tool := lookout.NewPrometheusQueryTool("http://localhost:9090", testAllowlist(), lookout.DefaultHTTPClient())
 	if tool.Name() != "prometheus_query" {
 		t.Errorf("Name() = %q", tool.Name())
 	}
@@ -111,7 +118,7 @@ func TestLokiQuerySuccess(t *testing.T) {
 		if r.URL.Path != "/loki/api/v1/query_range" {
 			t.Errorf("unexpected path: %s", r.URL.Path)
 		}
-		if r.URL.Query().Get("query") != "{app=\"bridge\"}" {
+		if r.URL.Query().Get("query") != `{namespace="matrix",app="bridge"}` {
 			t.Errorf("unexpected query: %s", r.URL.Query().Get("query"))
 		}
 		if r.URL.Query().Get("limit") != "50" {
@@ -122,8 +129,8 @@ func TestLokiQuerySuccess(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	tool := lookout.NewLokiQueryTool(srv.URL, srv.Client())
-	input := mustJSON(t, map[string]string{"query": "{app=\"bridge\"}"})
+	tool := lookout.NewLokiQueryTool(srv.URL, testAllowlist(), srv.Client())
+	input := mustJSON(t, map[string]string{"query": `{namespace="matrix",app="bridge"}`})
 	out, err := tool.Execute(t.Context(), input)
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
@@ -143,8 +150,8 @@ func TestLokiQueryLimitClamped(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	tool := lookout.NewLokiQueryTool(srv.URL, srv.Client())
-	input := mustJSON(t, map[string]any{"query": "{app=\"bridge\"}", "limit": 500})
+	tool := lookout.NewLokiQueryTool(srv.URL, testAllowlist(), srv.Client())
+	input := mustJSON(t, map[string]any{"query": `{namespace="matrix",app="bridge"}`, "limit": 500})
 	_, err := tool.Execute(t.Context(), input)
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
@@ -161,8 +168,8 @@ func TestLokiQueryCustomLimit(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	tool := lookout.NewLokiQueryTool(srv.URL, srv.Client())
-	input := mustJSON(t, map[string]any{"query": "{app=\"bridge\"}", "limit": 100})
+	tool := lookout.NewLokiQueryTool(srv.URL, testAllowlist(), srv.Client())
+	input := mustJSON(t, map[string]any{"query": `{namespace="matrix",app="bridge"}`, "limit": 100})
 	_, err := tool.Execute(t.Context(), input)
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
@@ -182,8 +189,8 @@ func TestLokiQueryWithSince(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	tool := lookout.NewLokiQueryTool(srv.URL, srv.Client())
-	input := mustJSON(t, map[string]any{"query": "{app=\"bridge\"}", "since": "1h"})
+	tool := lookout.NewLokiQueryTool(srv.URL, testAllowlist(), srv.Client())
+	input := mustJSON(t, map[string]any{"query": `{namespace="matrix",app="bridge"}`, "since": "1h"})
 	_, err := tool.Execute(t.Context(), input)
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
@@ -191,8 +198,8 @@ func TestLokiQueryWithSince(t *testing.T) {
 }
 
 func TestLokiQueryInvalidSince(t *testing.T) {
-	tool := lookout.NewLokiQueryTool("http://localhost:3100", lookout.DefaultHTTPClient())
-	input := mustJSON(t, map[string]any{"query": "{app=\"bridge\"}", "since": "not-a-duration"})
+	tool := lookout.NewLokiQueryTool("http://localhost:3100", testAllowlist(), lookout.DefaultHTTPClient())
+	input := mustJSON(t, map[string]any{"query": `{namespace="matrix",app="bridge"}`, "since": "not-a-duration"})
 	_, err := tool.Execute(t.Context(), input)
 	if err == nil {
 		t.Fatal("expected error for invalid since duration")
@@ -200,7 +207,7 @@ func TestLokiQueryInvalidSince(t *testing.T) {
 }
 
 func TestLokiQueryEmptyQuery(t *testing.T) {
-	tool := lookout.NewLokiQueryTool("http://localhost:3100", lookout.DefaultHTTPClient())
+	tool := lookout.NewLokiQueryTool("http://localhost:3100", testAllowlist(), lookout.DefaultHTTPClient())
 	input := mustJSON(t, map[string]string{"query": ""})
 	_, err := tool.Execute(t.Context(), input)
 	if err == nil {
@@ -215,8 +222,8 @@ func TestLokiQueryHTTPError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	tool := lookout.NewLokiQueryTool(srv.URL, srv.Client())
-	input := mustJSON(t, map[string]string{"query": "{bad"})
+	tool := lookout.NewLokiQueryTool(srv.URL, testAllowlist(), srv.Client())
+	input := mustJSON(t, map[string]string{"query": `{namespace="matrix"}`})
 	_, err := tool.Execute(t.Context(), input)
 	if err == nil {
 		t.Fatal("expected error for 400 response")
@@ -227,7 +234,7 @@ func TestLokiQueryHTTPError(t *testing.T) {
 }
 
 func TestLokiQueryInterface(t *testing.T) {
-	tool := lookout.NewLokiQueryTool("http://localhost:3100", lookout.DefaultHTTPClient())
+	tool := lookout.NewLokiQueryTool("http://localhost:3100", testAllowlist(), lookout.DefaultHTTPClient())
 	if tool.Name() != "loki_query" {
 		t.Errorf("Name() = %q", tool.Name())
 	}
