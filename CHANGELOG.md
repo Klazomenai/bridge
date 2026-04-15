@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.3](https://github.com/Klazomenai/bridge/compare/v0.1.0-alpha.2...v0.1.0-alpha.3) (2026-04-15)
+
+
+### 🔐 Battened Hatches
+
+* **tools:** restrict PromQL/LogQL queries to namespace-scoped patterns 🔐 ([#108](https://github.com/Klazomenai/bridge/issues/108)) ([1829f37](https://github.com/Klazomenai/bridge/commit/1829f37cfaa147f7af36d2ef3657b84e4f607c1a))
+
 ## [0.1.0-alpha.2](https://github.com/Klazomenai/bridge/compare/v0.1.0-alpha.1...v0.1.0-alpha.2) (2026-04-04)
 
 
