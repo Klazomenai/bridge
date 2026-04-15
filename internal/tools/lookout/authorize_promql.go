@@ -2,6 +2,7 @@ package lookout
 
 import (
 	"fmt"
+	"regexp"
 	"regexp/syntax"
 
 	"github.com/prometheus/prometheus/model/labels"
@@ -99,12 +100,25 @@ func checkNamespaceMatcher(m *labels.Matcher, allowlist *NamespaceAllowlist) err
 	return fmt.Errorf("lookout: unsupported namespace matcher type %v", m.Type)
 }
 
-// unsafeRegexFlags are the inline flag directives a caller must NOT be able to
-// introduce via an in-regex `(?flags)` construct. Case-folding lets "(?i)matrix"
-// widen the match beyond "matrix" at the backend even though our literal
-// extraction collapses it to a single rune-string; DotNL and NonGreedy are
-// meaningless for literals but rejecting them pre-empts accidental
-// interactions with future regex-construct support.
+// flagDirectiveRe catches every Perl-style inline flag directive at the
+// pattern-string level — `(?i)`, `(?m)`, `(?-i)`, `(?i:...)`, `(?im:...)`,
+// `(?U)`, etc. — without having to inspect the parsed AST. This is important
+// because some directives SET flag bits (e.g. `(?i)` sets FoldCase) while
+// others CLEAR them (e.g. `(?m)` clears OneLine), so a bit-mask check on
+// syntax.Regexp.Flags cannot detect all of them uniformly.
+//
+// The pattern matches `(?` followed by one or more flag letters (or a `-`
+// for "unset flag") terminated by `:` or `)`. It does NOT match:
+//   - `(?:...)` — non-capturing group (no flag letters)
+//   - `(?P<name>...)` — Go's named-capture syntax (after `P` is `<` not `:`/`)`)
+//   - an escaped literal `\(\?` — the backslash separates `(` from `?`
+var flagDirectiveRe = regexp.MustCompile(`\(\?[a-zA-Z\-]+[:)]`)
+
+// unsafeRegexFlags are inline flag directives that SET a bit the default Perl
+// parser state doesn't carry. Retained as a belt-and-braces check after the
+// string-level rejection above. Note: `(?m)` (clears OneLine) cannot be
+// caught by this mask alone — it removes a bit rather than adding one. See
+// flagDirectiveRe.
 const unsafeRegexFlags = syntax.FoldCase | syntax.DotNL | syntax.NonGreedy | syntax.Literal
 
 // checkNamespaceRegex verifies the regex is a literal anchored alternation of
@@ -133,6 +147,9 @@ const unsafeRegexFlags = syntax.FoldCase | syntax.DotNL | syntax.NonGreedy | syn
 //   - "matrix|argocd"            (literal alternation, all entries allowlisted)
 //   - "(matrix|argocd)"          (parenthesised alternation)
 func checkNamespaceRegex(pattern string, allowlist *NamespaceAllowlist) error {
+	if flagDirectiveRe.MatchString(pattern) {
+		return fmt.Errorf("lookout: inline regex flag directive not permitted in %q", pattern)
+	}
 	re, err := syntax.Parse(pattern, syntax.Perl)
 	if err != nil {
 		return fmt.Errorf("lookout: invalid namespace regex %q: %w", pattern, err)

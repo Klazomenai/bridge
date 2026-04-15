@@ -120,8 +120,8 @@ func main() {
 		toolReg.Register(tools.NewStubTool("prometheus_query", "Query Prometheus metrics (PROMETHEUS_URL not set)"))
 		slog.Info("lookout: prometheus_query registered as stub (PROMETHEUS_URL not set)")
 	case lookoutAllowlist.Len() == 0:
-		toolReg.Register(tools.NewStubTool("prometheus_query", "Query Prometheus metrics (LOOKOUT_NAMESPACE_ALLOWLIST not set)"))
-		slog.Warn("lookout: prometheus_query registered as stub (LOOKOUT_NAMESPACE_ALLOWLIST not set)")
+		toolReg.Register(tools.NewStubTool("prometheus_query", "Query Prometheus metrics (LOOKOUT_NAMESPACE_ALLOWLIST not set or empty)"))
+		slog.Warn("lookout: prometheus_query registered as stub (LOOKOUT_NAMESPACE_ALLOWLIST not set or empty)")
 	default:
 		toolReg.Register(lookouttools.NewPrometheusQueryTool(promURL, lookoutAllowlist, lookouttools.DefaultHTTPClient()))
 		slog.Info("lookout: prometheus_query registered", "url", promURL, "namespaces", lookoutAllowlist.Names())
@@ -131,8 +131,8 @@ func main() {
 		toolReg.Register(tools.NewStubTool("loki_query", "Query Loki logs (LOKI_URL not set)"))
 		slog.Info("lookout: loki_query registered as stub (LOKI_URL not set)")
 	case lookoutAllowlist.Len() == 0:
-		toolReg.Register(tools.NewStubTool("loki_query", "Query Loki logs (LOOKOUT_NAMESPACE_ALLOWLIST not set)"))
-		slog.Warn("lookout: loki_query registered as stub (LOOKOUT_NAMESPACE_ALLOWLIST not set)")
+		toolReg.Register(tools.NewStubTool("loki_query", "Query Loki logs (LOOKOUT_NAMESPACE_ALLOWLIST not set or empty)"))
+		slog.Warn("lookout: loki_query registered as stub (LOOKOUT_NAMESPACE_ALLOWLIST not set or empty)")
 	default:
 		toolReg.Register(lookouttools.NewLokiQueryTool(lokiURL, lookoutAllowlist, lookouttools.DefaultHTTPClient()))
 		slog.Info("lookout: loki_query registered", "url", lokiURL, "namespaces", lookoutAllowlist.Names())

@@ -197,6 +197,54 @@ func TestAuthorizePromQL_RegexDotNLFlag(t *testing.T) {
 	}
 }
 
+// TestAuthorizePromQL_RegexMultilineFlag probes `(?m)` — clears the default
+// OneLine flag (makes ^/$ match line boundaries). The flag's bitmask check
+// cannot catch this because it CLEARS a bit rather than sets one, so the
+// pre-parse string-level directive scanner must be the gate.
+// Irrelevant for literal-only regex semantics but required for PR docs
+// accuracy and future-proofing if anchor support is ever added.
+func TestAuthorizePromQL_RegexMultilineFlag(t *testing.T) {
+	if err := lookout.AuthorizePromQL(`up{namespace=~"(?m)matrix"}`, promAllowlist()); err == nil {
+		t.Error("expected rejection for (?m) flag")
+	}
+}
+
+// TestAuthorizePromQL_RegexUngreedyFlag probes `(?U)` — makes repetition
+// non-greedy. Meaningless for literals but rejected for the same reason.
+func TestAuthorizePromQL_RegexUngreedyFlag(t *testing.T) {
+	if err := lookout.AuthorizePromQL(`up{namespace=~"(?U)matrix"}`, promAllowlist()); err == nil {
+		t.Error("expected rejection for (?U) flag")
+	}
+}
+
+// TestAuthorizePromQL_RegexFlagUnsetDirective probes `(?-i)` — a directive
+// that clears a flag (here a no-op because FoldCase wasn't set). Still a
+// user-introduced inline directive, still rejected by the string-level scan.
+func TestAuthorizePromQL_RegexFlagUnsetDirective(t *testing.T) {
+	if err := lookout.AuthorizePromQL(`up{namespace=~"(?-i)matrix"}`, promAllowlist()); err == nil {
+		t.Error("expected rejection for (?-i) flag-unset directive")
+	}
+}
+
+// TestAuthorizePromQL_NonCapturingGroupAllowed confirms the directive
+// scanner's false-positive guard: `(?:matrix|argocd)` is a non-capturing
+// group, NOT a flag directive. It must be accepted.
+func TestAuthorizePromQL_NonCapturingGroupAllowed(t *testing.T) {
+	if err := lookout.AuthorizePromQL(`up{namespace=~"(?:matrix|argocd)"}`, promAllowlist()); err != nil {
+		t.Errorf("expected allow for non-capturing group: %v", err)
+	}
+}
+
+// TestAuthorizePromQL_NamedCaptureAllowed confirms the directive scanner
+// does not flag Go's named-capture syntax `(?P<name>...)`. The regex itself
+// has to ALSO be a valid literal alternation to ultimately pass, which
+// `(?P<ns>matrix)` is (extractLiterals unwraps OpCapture and yields "matrix").
+func TestAuthorizePromQL_NamedCaptureAllowed(t *testing.T) {
+	if err := lookout.AuthorizePromQL(`up{namespace=~"(?P<ns>matrix)"}`, promAllowlist()); err != nil {
+		t.Errorf("expected allow for named capture group: %v", err)
+	}
+}
+
 // --- rejection: non-allowlisted value ---
 
 func TestAuthorizePromQL_EqualityNotInAllowlist(t *testing.T) {
