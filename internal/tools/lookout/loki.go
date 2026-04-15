@@ -20,13 +20,16 @@ const (
 
 // LokiQueryTool queries the Loki HTTP API.
 type LokiQueryTool struct {
-	baseURL string
-	client  HTTPClient
+	baseURL   string
+	allowlist *NamespaceAllowlist
+	client    HTTPClient
 }
 
 // NewLokiQueryTool creates a loki_query tool.
-func NewLokiQueryTool(baseURL string, client HTTPClient) *LokiQueryTool {
-	return &LokiQueryTool{baseURL: baseURL, client: client}
+// allowlist must be non-nil and non-empty — callers are expected to register
+// a stub when the namespace allowlist is not configured.
+func NewLokiQueryTool(baseURL string, allowlist *NamespaceAllowlist, client HTTPClient) *LokiQueryTool {
+	return &LokiQueryTool{baseURL: baseURL, allowlist: allowlist, client: client}
 }
 
 func (t *LokiQueryTool) Name() string        { return "loki_query" }
@@ -66,6 +69,10 @@ func (t *LokiQueryTool) Execute(ctx context.Context, input json.RawMessage) (str
 
 	if params.Query == "" {
 		return "", fmt.Errorf("query is required")
+	}
+
+	if err := AuthorizeLogQL(params.Query, t.allowlist); err != nil {
+		return "", err
 	}
 
 	limit := params.Limit

@@ -1,0 +1,201 @@
+package lookout
+
+import (
+	"fmt"
+	"regexp/syntax"
+
+	"github.com/prometheus/prometheus/model/labels"
+	"github.com/prometheus/prometheus/promql/parser"
+)
+
+// namespaceLabel is the Kubernetes standard label name Prometheus series carry
+// when scraped via the kubernetes_sd_configs in the kube-prometheus-stack.
+// Lookout's allowlist enforcement requires every vector selector to constrain
+// this label.
+const namespaceLabel = "namespace"
+
+// promParser is a single shared Parser instance — Prometheus' ParseExpr is
+// safe to call concurrently on one parser because each call allocates its own
+// internal state.
+var promParser = parser.NewParser(parser.Options{})
+
+// AuthorizePromQL parses a PromQL query and rejects it unless every vector
+// selector in the AST constrains the "namespace" label to a value (or set of
+// values) drawn entirely from the allowlist.
+//
+// Rejection cases:
+//   - Parse error (malformed PromQL).
+//   - Any vector selector lacks a "namespace" label matcher.
+//   - A "namespace" matcher uses MatchNotEqual or MatchNotRegexp (negative
+//     matchers are exclusion, not inclusion — they grant visibility to
+//     everything except the named value).
+//   - A "namespace" matcher uses MatchEqual but the value is not in the
+//     allowlist.
+//   - A "namespace" matcher uses MatchRegexp and the regex is not a literal
+//     anchored alternation of allowlisted values (e.g. "^(foo|bar)$").
+//     Arbitrary regex (including ".*", ".+", "ma.*", "matrix|.*") is rejected.
+//
+// Returns nil if every vector selector in the AST is authorised.
+func AuthorizePromQL(query string, allowlist *NamespaceAllowlist) error {
+	if allowlist == nil || allowlist.Len() == 0 {
+		return fmt.Errorf("lookout: namespace allowlist is empty — query refused")
+	}
+
+	expr, err := promParser.ParseExpr(query)
+	if err != nil {
+		return fmt.Errorf("lookout: invalid PromQL: %w", err)
+	}
+
+	var authErr error
+	parser.Inspect(expr, func(node parser.Node, _ []parser.Node) error {
+		vs, ok := node.(*parser.VectorSelector)
+		if !ok {
+			return nil
+		}
+		if err := checkSelector(vs.LabelMatchers, allowlist); err != nil {
+			authErr = err
+			return err // stops further traversal
+		}
+		return nil
+	})
+	return authErr
+}
+
+// checkSelector verifies a set of label matchers satisfies the namespace
+// constraint.
+func checkSelector(matchers []*labels.Matcher, allowlist *NamespaceAllowlist) error {
+	var ns *labels.Matcher
+	for _, m := range matchers {
+		if m.Name == namespaceLabel {
+			if ns != nil {
+				// PromQL disallows duplicate label matchers at parse time, but
+				// guard defensively against upstream changes.
+				return fmt.Errorf("lookout: duplicate namespace matcher")
+			}
+			ns = m
+		}
+	}
+	if ns == nil {
+		return fmt.Errorf("lookout: query missing required namespace matcher (allowed namespaces: %v)", allowlist.Names())
+	}
+	return checkNamespaceMatcher(ns, allowlist)
+}
+
+// checkNamespaceMatcher verifies a single namespace matcher is safe.
+func checkNamespaceMatcher(m *labels.Matcher, allowlist *NamespaceAllowlist) error {
+	switch m.Type {
+	case labels.MatchEqual:
+		if !allowlist.Contains(m.Value) {
+			return fmt.Errorf("lookout: namespace %q not in allowlist %v", m.Value, allowlist.Names())
+		}
+		return nil
+
+	case labels.MatchRegexp:
+		return checkNamespaceRegex(m.Value, allowlist)
+
+	case labels.MatchNotEqual, labels.MatchNotRegexp:
+		return fmt.Errorf("lookout: negative namespace matcher %q not permitted", m.String())
+	}
+	return fmt.Errorf("lookout: unsupported namespace matcher type %v", m.Type)
+}
+
+// checkNamespaceRegex verifies the regex is a literal anchored alternation of
+// allowlisted values.
+//
+// Prometheus implicitly anchors all label regex matchers with ^(?: ... )$,
+// matching the whole label value. We parse the user-supplied regex, require
+// it to be a simple alternation (or a single literal), and verify every
+// alternative is a plain string in the allowlist.
+//
+// This rejects:
+//   - ".*", ".+", "^.*$" (wildcards — unbounded)
+//   - "ma.*", "ma.+" (partial wildcards)
+//   - "matrix|.*" (wildcard alternative)
+//   - "[a-z]+" (character classes)
+//   - "(?i)matrix" (flags)
+//   - ".{1,10}" (repetition)
+//
+// It accepts:
+//   - "matrix"       (single literal)
+//   - "matrix|argocd" (literal alternation, all entries allowlisted)
+//   - "(matrix|argocd)" (parenthesised alternation)
+func checkNamespaceRegex(pattern string, allowlist *NamespaceAllowlist) error {
+	// Parse in POSIX-flavour (closest to Prometheus' RE2). Prometheus uses
+	// grafana/regexp which is a fork of Go stdlib regexp/syntax semantics.
+	re, err := syntax.Parse(pattern, syntax.Perl)
+	if err != nil {
+		return fmt.Errorf("lookout: invalid namespace regex %q: %w", pattern, err)
+	}
+	values, err := extractLiterals(re)
+	if err != nil {
+		return fmt.Errorf("lookout: namespace regex %q rejected: %w", pattern, err)
+	}
+	for _, v := range values {
+		if !allowlist.Contains(v) {
+			return fmt.Errorf("lookout: namespace %q (from regex %q) not in allowlist %v", v, pattern, allowlist.Names())
+		}
+	}
+	return nil
+}
+
+// extractLiterals walks a regex AST and returns the set of literal strings it
+// can match. Returns an error if the regex is not a literal alternation (e.g.,
+// contains wildcards, character classes, repetition).
+func extractLiterals(re *syntax.Regexp) ([]string, error) {
+	// Prometheus anchors regex matchers at both ends. The parser returns a
+	// tree that may be wrapped in OpCapture; unwrap it.
+	re = unwrap(re)
+
+	switch re.Op {
+	case syntax.OpLiteral:
+		return []string{string(re.Rune)}, nil
+
+	case syntax.OpAlternate:
+		var out []string
+		for _, sub := range re.Sub {
+			lits, err := extractLiterals(sub)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, lits...)
+		}
+		return out, nil
+
+	case syntax.OpEmptyMatch:
+		// An empty alternative (e.g., "a||b") would match the empty namespace
+		// label, which no real series will carry. Reject rather than accept.
+		return nil, fmt.Errorf("empty alternative is not a valid namespace")
+
+	case syntax.OpConcat:
+		// A concat of literals is still a literal (e.g., "ma" "trix" → "matrix").
+		// Walk sub-expressions; if they're all literals or empty-match, join them.
+		var b []rune
+		for _, sub := range re.Sub {
+			sub = unwrap(sub)
+			switch sub.Op {
+			case syntax.OpLiteral:
+				b = append(b, sub.Rune...)
+			case syntax.OpEmptyMatch:
+				// skip
+			default:
+				return nil, fmt.Errorf("unsupported regex construct in concat: %s", sub.Op)
+			}
+		}
+		if len(b) == 0 {
+			return nil, fmt.Errorf("empty concat is not a valid namespace")
+		}
+		return []string{string(b)}, nil
+
+	default:
+		return nil, fmt.Errorf("unsupported regex construct %s (only literal alternations permitted)", re.Op)
+	}
+}
+
+// unwrap removes OpCapture wrappers that regexp/syntax inserts around
+// parenthesised groups. The parse tree is otherwise unchanged.
+func unwrap(re *syntax.Regexp) *syntax.Regexp {
+	for re.Op == syntax.OpCapture && len(re.Sub) == 1 {
+		re = re.Sub[0]
+	}
+	return re
+}

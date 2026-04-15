@@ -25,13 +25,16 @@ func DefaultHTTPClient() HTTPClient {
 
 // PrometheusQueryTool queries the Prometheus HTTP API.
 type PrometheusQueryTool struct {
-	baseURL string
-	client  HTTPClient
+	baseURL   string
+	allowlist *NamespaceAllowlist
+	client    HTTPClient
 }
 
 // NewPrometheusQueryTool creates a prometheus_query tool.
-func NewPrometheusQueryTool(baseURL string, client HTTPClient) *PrometheusQueryTool {
-	return &PrometheusQueryTool{baseURL: baseURL, client: client}
+// allowlist must be non-nil and non-empty — callers are expected to register
+// a stub when the namespace allowlist is not configured.
+func NewPrometheusQueryTool(baseURL string, allowlist *NamespaceAllowlist, client HTTPClient) *PrometheusQueryTool {
+	return &PrometheusQueryTool{baseURL: baseURL, allowlist: allowlist, client: client}
 }
 
 func (t *PrometheusQueryTool) Name() string { return "prometheus_query" }
@@ -68,6 +71,10 @@ func (t *PrometheusQueryTool) Execute(ctx context.Context, input json.RawMessage
 
 	if params.Query == "" {
 		return "", fmt.Errorf("query is required")
+	}
+
+	if err := AuthorizePromQL(params.Query, t.allowlist); err != nil {
+		return "", err
 	}
 
 	u, err := url.Parse(t.baseURL + "/api/v1/query")
