@@ -1003,10 +1003,10 @@ crew:
 
 // --- 400 auto-recovery tests (bridge#100) ---
 
-// orphanedToolResultError mimics the anthropic-sdk-go Error().
+// errOrphanedToolResult mimics the anthropic-sdk-go Error().
 // The real SDK error includes the HTTP method, URL, status code, and raw JSON
 // body. isOrphanedToolResultError matches on "400" + "unexpected tool_use_id".
-var orphanedToolResultError = fmt.Errorf(
+var errOrphanedToolResult = fmt.Errorf(
 	`POST "https://api.anthropic.com/v1/messages": 400 Bad Request {"type":"error","error":{"type":"invalid_request_error","message":"messages.0.content.0: unexpected tool_use_id found in tool_result blocks: toolu_01ABC"}}`,
 )
 
@@ -1014,7 +1014,7 @@ func TestHandle400OrphanedRetrySucceeds(t *testing.T) {
 	mock := &mockClaudeClient{
 		// Call 0: 400 orphaned tool_result error.
 		// Call 1 (retry): success text response.
-		callErrors: []error{orphanedToolResultError, nil},
+		callErrors: []error{errOrphanedToolResult, nil},
 		responses:  []*anthropic.Message{textResponse("Recovered, Captain.")},
 	}
 	toolReg := tools.NewRegistry()
@@ -1062,7 +1062,7 @@ func TestHandle400DifferentErrorNoRetry(t *testing.T) {
 func TestHandle400OrphanedRetryAlsoFails(t *testing.T) {
 	mock := &mockClaudeClient{
 		// Both calls fail with the same orphaned error.
-		callErrors: []error{orphanedToolResultError, orphanedToolResultError},
+		callErrors: []error{errOrphanedToolResult, errOrphanedToolResult},
 	}
 	toolReg := tools.NewRegistry()
 	orch := newTestOrchestratorWithMock(t, toolReg, mock)
@@ -1085,7 +1085,7 @@ func TestHandle400MidLoopNoRecovery(t *testing.T) {
 	// Second call: 400 orphaned error (iteration 1 — mid-loop).
 	// Mid-loop recovery is NOT attempted.
 	mock := &mockClaudeClient{
-		callErrors: []error{nil, orphanedToolResultError},
+		callErrors: []error{nil, errOrphanedToolResult},
 		responses:  []*anthropic.Message{toolUseResponse("tu_1", "echo_tool", json.RawMessage(`{"msg":"hi"}`))},
 	}
 	toolReg := tools.NewRegistry()

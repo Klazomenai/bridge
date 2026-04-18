@@ -82,7 +82,6 @@ func (o *Orchestrator) runToolLoop(ctx context.Context, c crew.Crew, roomID stri
 					return nil, fmt.Errorf("anthropic api (retry after buffer clear): %w", retryErr)
 				}
 				resp = retryResp
-				err = nil
 			} else {
 				return nil, fmt.Errorf("anthropic api (iteration %d): %w", i, err)
 			}
