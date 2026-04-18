@@ -101,10 +101,21 @@ func LoadAuth(path string) (*UserAuthorization, error) {
 	return auth, nil
 }
 
+// UnknownCrewError is returned by ValidateAuthCrews when the auth config
+// references a crew ID not present in the crew registry. Callers can use
+// errors.As to extract the CrewID for structured logging.
+type UnknownCrewError struct {
+	CrewID string
+}
+
+func (e *UnknownCrewError) Error() string {
+	return fmt.Sprintf("auth config references unknown crew: %q", e.CrewID)
+}
+
 // ValidateAuthCrews checks that every non-wildcard crew ID referenced in auth
-// exists in knownCrew. Returns an error naming the first unknown crew, or nil
-// if all are valid. When auth is nil, validation is skipped (no config = no
-// crew references to validate).
+// exists in knownCrew. Returns an *UnknownCrewError naming the first unknown
+// crew, or nil if all are valid. When auth is nil, validation is skipped (no
+// config = no crew references to validate).
 func ValidateAuthCrews(auth *UserAuthorization, knownCrew []string) error {
 	if auth == nil {
 		return nil
@@ -115,7 +126,7 @@ func ValidateAuthCrews(auth *UserAuthorization, knownCrew []string) error {
 	}
 	for _, c := range auth.CrewIDs() {
 		if _, ok := known[c]; !ok {
-			return fmt.Errorf("auth config references unknown crew: %q", c)
+			return &UnknownCrewError{CrewID: c}
 		}
 	}
 	return nil

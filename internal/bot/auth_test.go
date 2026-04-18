@@ -1,10 +1,10 @@
 package bot
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 	"testing"
 
 	"maunium.net/go/mautrix/id"
@@ -196,8 +196,13 @@ func TestValidateAuthCrews_UnknownCrew(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for unknown crew")
 	}
-	if !strings.Contains(err.Error(), "nonexistent") {
-		t.Errorf("expected error to name the unknown crew, got: %v", err)
+	// Verify the typed error exposes the crew ID for structured logging.
+	var uce *UnknownCrewError
+	if !errors.As(err, &uce) {
+		t.Fatalf("expected *UnknownCrewError, got %T", err)
+	}
+	if uce.CrewID != "nonexistent" {
+		t.Errorf("expected CrewID=nonexistent, got %q", uce.CrewID)
 	}
 }
 

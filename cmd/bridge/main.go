@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"os"
@@ -185,7 +186,12 @@ func main() {
 		os.Exit(1)
 	}
 	if err := bot.ValidateAuthCrews(userAuth, registry.IDs()); err != nil {
-		slog.Error("auth validation failed", "err", err)
+		var uce *bot.UnknownCrewError
+		if errors.As(err, &uce) {
+			slog.Error("auth config references unknown crew", "crew", uce.CrewID)
+		} else {
+			slog.Error("auth validation failed", "err", err)
+		}
 		os.Exit(1)
 	}
 
