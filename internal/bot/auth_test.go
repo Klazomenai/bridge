@@ -1,6 +1,7 @@
 package bot
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"sort"
@@ -173,5 +174,40 @@ func TestLoadAuthInvalidYAML(t *testing.T) {
 	_, err := LoadAuth(path)
 	if err == nil {
 		t.Error("expected error for invalid YAML")
+	}
+}
+
+// --- ValidateAuthCrews tests (bridge#107) ---
+
+func TestValidateAuthCrews_Valid(t *testing.T) {
+	auth := &UserAuthorization{users: map[id.UserID]*crewPermission{
+		"@officer:server": {crew: map[string]struct{}{"maren": {}, "crest": {}}},
+	}}
+	if err := ValidateAuthCrews(auth, []string{"maren", "crest", "bosun"}); err != nil {
+		t.Errorf("expected no error, got: %v", err)
+	}
+}
+
+func TestValidateAuthCrews_UnknownCrew(t *testing.T) {
+	auth := &UserAuthorization{users: map[id.UserID]*crewPermission{
+		"@officer:server": {crew: map[string]struct{}{"maren": {}, "nonexistent": {}}},
+	}}
+	err := ValidateAuthCrews(auth, []string{"maren", "crest", "bosun"})
+	if err == nil {
+		t.Fatal("expected error for unknown crew")
+	}
+	// Verify the typed error exposes the crew ID for structured logging.
+	var uce *UnknownCrewError
+	if !errors.As(err, &uce) {
+		t.Fatalf("expected *UnknownCrewError, got %T", err)
+	}
+	if uce.CrewID != "nonexistent" {
+		t.Errorf("expected CrewID=nonexistent, got %q", uce.CrewID)
+	}
+}
+
+func TestValidateAuthCrews_NilAuth(t *testing.T) {
+	if err := ValidateAuthCrews(nil, []string{"maren", "crest"}); err != nil {
+		t.Errorf("expected no error for nil auth, got: %v", err)
 	}
 }

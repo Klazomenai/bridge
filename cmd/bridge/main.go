@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"os"
@@ -184,18 +185,14 @@ func main() {
 		slog.Error("failed to load auth config", "path", authPath, "err", err)
 		os.Exit(1)
 	}
-	if userAuth != nil {
-		knownCrew := registry.IDs()
-		knownSet := make(map[string]struct{}, len(knownCrew))
-		for _, c := range knownCrew {
-			knownSet[c] = struct{}{}
+	if err := bot.ValidateAuthCrews(userAuth, registry.IDs()); err != nil {
+		var uce *bot.UnknownCrewError
+		if errors.As(err, &uce) {
+			slog.Error("auth config references unknown crew", "crew", uce.CrewID)
+		} else {
+			slog.Error("auth validation failed", "err", err)
 		}
-		for _, c := range userAuth.CrewIDs() {
-			if _, ok := knownSet[c]; !ok {
-				slog.Error("auth config references unknown crew", "crew", c)
-				os.Exit(1)
-			}
-		}
+		os.Exit(1)
 	}
 
 	// --- Session context manager ---
