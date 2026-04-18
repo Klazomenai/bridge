@@ -884,17 +884,22 @@ func TestMessageDeniedOfficerWrongCrewExplicit(t *testing.T) {
 	orch := &mockOrch{responses: []orchestrator.Response{{Text: "Aye"}}}
 	sender := &mockSender{}
 	b := newTestBot(t, orch, sender, "@bridge:server")
+	// Use an authorized default crew so this test only passes if the explicit
+	// "Maren, ..." prefix is actually extracted and routed to maren.
+	b.cfg.DefaultCrew = "crest"
 	// Override auth: officer only authorized for crest.
 	b.cfg.UserAuth = &UserAuthorization{users: map[id.UserID]*crewPermission{
 		"@officer:server": {crew: map[string]struct{}{"crest": {}}},
 	}}
 
-	// Officer sends Maren-prefixed message — prefix routing extracts "maren",
-	// auth check fails (maren is NOT in the officer's crew list), silently dropped.
+	// Officer sends Maren-prefixed message — prefix routing must extract "maren";
+	// auth check then fails (maren is NOT in the officer's crew list), so the
+	// message is silently dropped. If prefix extraction breaks, fallback to the
+	// default crew ("crest") would authorize the request and this test would fail.
 	b.handleMessage(t.Context(), textEvent("@officer:server", "!room:server", "Maren, hull check"))
 
 	if len(orch.calls) != 0 {
-		t.Fatalf("expected 0 orchestrator calls for unauthorized crew, got %d", len(orch.calls))
+		t.Fatalf("expected 0 orchestrator calls for unauthorized explicit crew, got %d", len(orch.calls))
 	}
 }
 
