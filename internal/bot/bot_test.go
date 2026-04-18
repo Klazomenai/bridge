@@ -281,13 +281,14 @@ func TestExtractCrewRequestSpaceDelimited(t *testing.T) {
 	}
 }
 
-func TestExtractCrewRequestCommaStillTakesPriority(t *testing.T) {
-	// When punctuation IS present, comma/colon should match first (pass 1),
-	// not the space fallback (pass 2).
+func TestExtractCrewRequestCommaRoutingStillWorks(t *testing.T) {
+	// Comma-delimited routing continues to work alongside the new space
+	// fallback — the two matchers are mutually exclusive on the same input,
+	// so this just guards against regressing the punctuated path.
 	crew := []string{"maren", "crest"}
 	got := extractCrewRequest("crest, check the inbox", crew)
 	if got != "crest" {
-		t.Errorf("expected crest via comma (priority over space), got %q", got)
+		t.Errorf("expected crest via comma-delimited routing, got %q", got)
 	}
 }
 

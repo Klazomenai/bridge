@@ -220,8 +220,10 @@ func extractCrewRequest(text string, knownCrew []string) string {
 	}
 
 	// Fallback: "<crew> " — for voice STT without punctuation.
-	// Two-pass ensures punctuated matches take priority over space-delimited,
-	// preventing false positives if a crew name is a prefix of a common word.
+	// The trailing space is required so a crew name that is a prefix of a
+	// longer word (e.g. "crestfallen") does not match. Kept as a separate
+	// pass from the punctuated matchers to leave room for delimiter-specific
+	// handling later.
 	for _, c := range knownCrew {
 		if strings.HasPrefix(lower, c+" ") {
 			return c
