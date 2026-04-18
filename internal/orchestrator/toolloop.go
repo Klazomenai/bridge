@@ -8,6 +8,7 @@ import (
 
 	anthropic "github.com/anthropics/anthropic-sdk-go"
 
+	ctxbuf "klazomenai/bridge/internal/context"
 	"klazomenai/bridge/internal/crew"
 	"klazomenai/bridge/internal/tools"
 )
@@ -38,23 +39,47 @@ type loopResult struct {
 // with tool_use blocks, the bridge executes the requested tools and feeds
 // results back. This continues until Claude produces a text response or the
 // iteration limit is reached.
-func (o *Orchestrator) runToolLoop(ctx context.Context, c crew.Crew, roomID string, messages []anthropic.MessageParam) (*loopResult, error) {
-	crewTools := o.tools.ForCrew(c.Tools())
+//
+// Defence-in-depth (bridge#100): on iteration 0, if the API returns 400 with
+// "unexpected tool_use_id" (an orphaned tool_result left over from a prior
+// eviction — see bridge#99), the buffer is cleared and the request is retried
+// once with only freshUserMsg. Mid-loop errors (iteration > 0) are NOT
+// retried because the in-flight state is complex.
+func (o *Orchestrator) runToolLoop(ctx context.Context, c crew.Crew, roomID string, buf *ctxbuf.ConversationBuffer, freshUserMsg anthropic.MessageParam, messages []anthropic.MessageParam) (*loopResult, error) {
+	// Build params once — Messages is set per iteration (and swapped on retry).
+	// This prevents drift if new fields are added to the params struct later.
+	params := anthropic.MessageNewParams{
+		Model:     anthropic.Model(c.Model()),
+		MaxTokens: maxTokens,
+		System: []anthropic.TextBlockParam{
+			{Text: c.SystemPrompt()},
+		},
+		Tools: o.tools.ForCrew(c.Tools()),
+	}
 
 	var turns []anthropic.MessageParam
 
 	for i := range maxToolIterations {
-		resp, err := o.client.New(ctx, anthropic.MessageNewParams{
-			Model:     anthropic.Model(c.Model()),
-			MaxTokens: maxTokens,
-			System: []anthropic.TextBlockParam{
-				{Text: c.SystemPrompt()},
-			},
-			Messages: messages,
-			Tools:    crewTools,
-		})
+		params.Messages = messages
+		resp, err := o.client.New(ctx, params)
 		if err != nil {
-			return nil, fmt.Errorf("anthropic api (iteration %d): %w", i, err)
+			// Defence-in-depth: on iteration 0, detect orphaned tool_result
+			// 400 and recover by clearing the buffer and retrying once.
+			if i == 0 && isOrphanedToolResultError(err) {
+				slog.Warn("orchestrator: detected orphaned tool_result in buffer, clearing and retrying",
+					"room", roomID, "crew", c.Name(), "err", err)
+				buf.Clear()
+				messages = []anthropic.MessageParam{freshUserMsg}
+				params.Messages = messages
+
+				retryResp, retryErr := o.client.New(ctx, params)
+				if retryErr != nil {
+					return nil, fmt.Errorf("anthropic api (retry after buffer clear): %w", retryErr)
+				}
+				resp = retryResp
+			} else {
+				return nil, fmt.Errorf("anthropic api (iteration %d): %w", i, err)
+			}
 		}
 
 		// If Claude is done talking, extract text and return.
@@ -183,6 +208,19 @@ func buildResponse(c crew.Crew, text string) *Response {
 		CrewMember: c.Name(),
 		Verbosity:  c.Verbosity(),
 	}
+}
+
+// isOrphanedToolResultError detects the specific Anthropic API 400 error
+// caused by an orphaned tool_result block whose matching tool_use was evicted
+// from the conversation buffer. The anthropic-sdk-go error type lives in an
+// internal package (internal/apierror) so typed assertion is not possible;
+// we match on the Error() string which includes the status code and raw body.
+func isOrphanedToolResultError(err error) bool {
+	if err == nil {
+		return false
+	}
+	s := err.Error()
+	return strings.Contains(s, "400") && strings.Contains(s, "unexpected tool_use_id")
 }
 
 // frameMessage caps and prefixes the user input to limit prompt injection surface.

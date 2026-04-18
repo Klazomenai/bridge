@@ -123,7 +123,7 @@ func (o *Orchestrator) handleWithDepth(ctx context.Context, roomID, userText, re
 		"history_turns", len(history)/2, "model", c.Model(),
 		"delegation_depth", depth)
 
-	result, err := o.runToolLoop(ctx, c, roomID, messages)
+	result, err := o.runToolLoop(ctx, c, roomID, buf, userMsg, messages)
 	if err != nil {
 		return nil, err
 	}
