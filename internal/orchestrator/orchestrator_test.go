@@ -46,24 +46,40 @@ crew:
 `
 
 // mockClaudeClient supports multi-call sequences for tool-use testing.
+// Use callErrors (per-call) for recovery tests; use err (global) for
+// single-error-on-every-call tests.
 type mockClaudeClient struct {
-	responses []*anthropic.Message // returned in order; last one repeats if exhausted
-	err       error
-	calls     []anthropic.MessageNewParams
-	callIndex int
+	responses  []*anthropic.Message // returned in order; last one repeats if exhausted
+	err        error                // returned on every call (backward compat)
+	callErrors []error              // per-call errors; takes priority when non-nil slice
+	calls      []anthropic.MessageNewParams
+	callIndex  int
 }
 
 func (m *mockClaudeClient) New(_ context.Context, body anthropic.MessageNewParams, _ ...option.RequestOption) (*anthropic.Message, error) {
 	m.calls = append(m.calls, body)
-	if m.err != nil {
+	idx := m.callIndex
+
+	// Per-call errors take priority over the global err field.
+	if len(m.callErrors) > 0 {
+		errIdx := idx
+		if errIdx >= len(m.callErrors) {
+			errIdx = len(m.callErrors) - 1
+		}
+		if m.callErrors[errIdx] != nil {
+			m.callIndex++
+			return nil, m.callErrors[errIdx]
+		}
+	} else if m.err != nil {
 		return nil, m.err
 	}
-	idx := m.callIndex
-	if idx >= len(m.responses) {
-		idx = len(m.responses) - 1
+
+	respIdx := idx
+	if respIdx >= len(m.responses) {
+		respIdx = len(m.responses) - 1
 	}
 	m.callIndex++
-	return m.responses[idx], nil
+	return m.responses[respIdx], nil
 }
 
 func textResponse(text string) *anthropic.Message {
@@ -185,6 +201,16 @@ func newTestOrchestrator(t *testing.T, toolReg *tools.Registry, responses ...*an
 	}
 	mock := &mockClaudeClient{responses: responses}
 	return orchestrator.NewWithClient(reg, mgr, toolReg, mock), mock
+}
+
+// newTestOrchestratorWithMock is like newTestOrchestrator but uses a
+// pre-built mock — needed for recovery tests that configure per-call
+// errors via callErrors.
+func newTestOrchestratorWithMock(t *testing.T, toolReg *tools.Registry, mock *mockClaudeClient) *orchestrator.Orchestrator {
+	t.Helper()
+	reg := newTestRegistry(t)
+	mgr := ctxbuf.NewManager(ctxbuf.DefaultMaxTurns)
+	return orchestrator.NewWithClient(reg, mgr, toolReg, mock)
 }
 
 // =====================================================================
@@ -972,5 +998,109 @@ crew:
 	resultText := toolResult.Content[0].OfText.Text
 	if !strings.Contains(resultText, "context deadline exceeded") {
 		t.Errorf("expected 'context deadline exceeded' in result, got: %q", resultText)
+	}
+}
+
+// --- 400 auto-recovery tests (bridge#100) ---
+
+// orphanedToolResultError mimics the anthropic-sdk-go Error().
+// The real SDK error includes the HTTP method, URL, status code, and raw JSON
+// body. isOrphanedToolResultError matches on "400" + "unexpected tool_use_id".
+var orphanedToolResultError = fmt.Errorf(
+	`POST "https://api.anthropic.com/v1/messages": 400 Bad Request {"type":"error","error":{"type":"invalid_request_error","message":"messages.0.content.0: unexpected tool_use_id found in tool_result blocks: toolu_01ABC"}}`,
+)
+
+func TestHandle400OrphanedRetrySucceeds(t *testing.T) {
+	mock := &mockClaudeClient{
+		// Call 0: 400 orphaned tool_result error.
+		// Call 1 (retry): success text response.
+		callErrors: []error{orphanedToolResultError, nil},
+		responses:  []*anthropic.Message{textResponse("Recovered, Captain.")},
+	}
+	toolReg := tools.NewRegistry()
+	orch := newTestOrchestratorWithMock(t, toolReg, mock)
+
+	responses, err := orch.Handle(t.Context(), "!room:server", "hull check", "")
+	if err != nil {
+		t.Fatalf("expected recovery, got error: %v", err)
+	}
+	if len(responses) == 0 || responses[0].Text != "Recovered, Captain." {
+		t.Errorf("unexpected response: %+v", responses)
+	}
+	// Should have called the API exactly twice: initial (400) + retry (success).
+	if len(mock.calls) != 2 {
+		t.Errorf("expected 2 API calls (initial + retry), got %d", len(mock.calls))
+	}
+	// Retry should have only the fresh user message (buffer was cleared).
+	retryMsgs := mock.calls[1].Messages
+	if len(retryMsgs) != 1 {
+		t.Errorf("expected 1 message in retry (fresh user only), got %d", len(retryMsgs))
+	}
+}
+
+func TestHandle400DifferentErrorNoRetry(t *testing.T) {
+	differentError := fmt.Errorf(`POST "https://api.anthropic.com/v1/messages": 400 Bad Request {"type":"error","error":{"type":"invalid_request_error","message":"max_tokens must be positive"}}`)
+	mock := &mockClaudeClient{
+		err: differentError,
+	}
+	toolReg := tools.NewRegistry()
+	orch := newTestOrchestratorWithMock(t, toolReg, mock)
+
+	_, err := orch.Handle(t.Context(), "!room:server", "hull check", "")
+	if err == nil {
+		t.Fatal("expected error to propagate")
+	}
+	if !strings.Contains(err.Error(), "max_tokens") {
+		t.Errorf("expected original error, got: %v", err)
+	}
+	// Should have called exactly once — no retry.
+	if len(mock.calls) != 1 {
+		t.Errorf("expected 1 API call (no retry), got %d", len(mock.calls))
+	}
+}
+
+func TestHandle400OrphanedRetryAlsoFails(t *testing.T) {
+	mock := &mockClaudeClient{
+		// Both calls fail with the same orphaned error.
+		callErrors: []error{orphanedToolResultError, orphanedToolResultError},
+	}
+	toolReg := tools.NewRegistry()
+	orch := newTestOrchestratorWithMock(t, toolReg, mock)
+
+	_, err := orch.Handle(t.Context(), "!room:server", "hull check", "")
+	if err == nil {
+		t.Fatal("expected error after retry failure")
+	}
+	if !strings.Contains(err.Error(), "retry after buffer clear") {
+		t.Errorf("expected retry-failure error, got: %v", err)
+	}
+	// Two calls: initial + one retry.
+	if len(mock.calls) != 2 {
+		t.Errorf("expected 2 API calls, got %d", len(mock.calls))
+	}
+}
+
+func TestHandle400MidLoopNoRecovery(t *testing.T) {
+	// First call: tool_use response (iteration 0 succeeds).
+	// Second call: 400 orphaned error (iteration 1 — mid-loop).
+	// Mid-loop recovery is NOT attempted.
+	mock := &mockClaudeClient{
+		callErrors: []error{nil, orphanedToolResultError},
+		responses:  []*anthropic.Message{toolUseResponse("tu_1", "echo_tool", json.RawMessage(`{"msg":"hi"}`))},
+	}
+	toolReg := tools.NewRegistry()
+	toolReg.Register(&echoTool{})
+	orch := newTestOrchestratorWithMock(t, toolReg, mock)
+
+	_, err := orch.Handle(t.Context(), "!room:server", "hull check", "maren")
+	if err == nil {
+		t.Fatal("expected error from mid-loop 400")
+	}
+	if strings.Contains(err.Error(), "retry") {
+		t.Errorf("mid-loop 400 should NOT retry, got: %v", err)
+	}
+	// Two calls: iteration 0 (success) + iteration 1 (400, no retry).
+	if len(mock.calls) != 2 {
+		t.Errorf("expected 2 API calls, got %d", len(mock.calls))
 	}
 }
