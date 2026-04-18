@@ -51,7 +51,7 @@ crew:
 type mockClaudeClient struct {
 	responses  []*anthropic.Message // returned in order; last one repeats if exhausted
 	err        error                // returned on every call (backward compat)
-	callErrors []error              // per-call errors; takes priority when non-nil slice
+	callErrors []error              // per-call errors; takes priority when non-empty
 	calls      []anthropic.MessageNewParams
 	callIndex  int
 }
