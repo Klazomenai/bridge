@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.1.0-alpha.4](https://github.com/Klazomenai/bridge/compare/v0.1.0-alpha.3...v0.1.0-alpha.4) (2026-04-18)
+
+
+### 🔧 Hull Repairs
+
+* **bot:** space-delimited fallback for crew prefix routing 🐛 ([#118](https://github.com/Klazomenai/bridge/issues/118)) ([ebb1ad2](https://github.com/Klazomenai/bridge/commit/ebb1ad2158dedf29fd70616452b3a48f629c0530))
+* **context:** block-aware buffer eviction 🐛 ([#110](https://github.com/Klazomenai/bridge/issues/110)) ([94e942b](https://github.com/Klazomenai/bridge/commit/94e942b090e88de08ef9ff1cdde6f4a598f9ac05))
+* **orchestrator:** 400 auto-recovery defence-in-depth 🐛 ([#112](https://github.com/Klazomenai/bridge/issues/112)) ([07fbcdd](https://github.com/Klazomenai/bridge/commit/07fbcddc96fce7314acebac86565796f0e08a72f))
+
+
+### ♻️ Refitted
+
+* **bot:** extract ValidateAuthCrews from main.go 🧪 ([#113](https://github.com/Klazomenai/bridge/issues/113)) ([2d44919](https://github.com/Klazomenai/bridge/commit/2d44919a92241cb6a34a0450988b35f4d5419625))
+
 ## [0.1.0-alpha.3](https://github.com/Klazomenai/bridge/compare/v0.1.0-alpha.2...v0.1.0-alpha.3) (2026-04-15)
 
 
