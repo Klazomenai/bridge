@@ -269,6 +269,46 @@ func TestExtractCrewRequestChipsComma(t *testing.T) {
 	}
 }
 
+// --- space-delimited fallback tests (bridge#104) ---
+
+func TestExtractCrewRequestSpaceDelimited(t *testing.T) {
+	// Voice STT drops punctuation — "Crest signal status" should match via
+	// the space-delimited fallback.
+	crew := []string{"maren", "crest", "bosun", "lookout", "chips"}
+	got := extractCrewRequest("crest signal status", crew)
+	if got != "crest" {
+		t.Errorf("expected crest via space fallback, got %q", got)
+	}
+}
+
+func TestExtractCrewRequestCommaStillTakesPriority(t *testing.T) {
+	// When punctuation IS present, comma/colon should match first (pass 1),
+	// not the space fallback (pass 2).
+	crew := []string{"maren", "crest"}
+	got := extractCrewRequest("crest, check the inbox", crew)
+	if got != "crest" {
+		t.Errorf("expected crest via comma (priority over space), got %q", got)
+	}
+}
+
+func TestExtractCrewRequestSpaceNoFalsePositive(t *testing.T) {
+	// "crestfallen" starts with "crest" but NOT "crest " (note the space).
+	// Must not match.
+	crew := []string{"crest"}
+	got := extractCrewRequest("crestfallen sailor", crew)
+	if got != "" {
+		t.Errorf("expected no match for 'crestfallen', got %q", got)
+	}
+}
+
+func TestExtractCrewRequestSpaceCaseInsensitive(t *testing.T) {
+	crew := []string{"maren", "crest"}
+	got := extractCrewRequest("CREST signal status", crew)
+	if got != "crest" {
+		t.Errorf("expected crest (case-insensitive space fallback), got %q", got)
+	}
+}
+
 // --- handleMessage tests using mocks ---
 
 // mockOrch is a test double for OrchestratorI.
