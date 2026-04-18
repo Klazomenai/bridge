@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
 
 	"maunium.net/go/mautrix/id"
@@ -173,5 +174,35 @@ func TestLoadAuthInvalidYAML(t *testing.T) {
 	_, err := LoadAuth(path)
 	if err == nil {
 		t.Error("expected error for invalid YAML")
+	}
+}
+
+// --- ValidateAuthCrews tests (bridge#107) ---
+
+func TestValidateAuthCrews_Valid(t *testing.T) {
+	auth := &UserAuthorization{users: map[id.UserID]*crewPermission{
+		"@officer:server": {crew: map[string]struct{}{"maren": {}, "crest": {}}},
+	}}
+	if err := ValidateAuthCrews(auth, []string{"maren", "crest", "bosun"}); err != nil {
+		t.Errorf("expected no error, got: %v", err)
+	}
+}
+
+func TestValidateAuthCrews_UnknownCrew(t *testing.T) {
+	auth := &UserAuthorization{users: map[id.UserID]*crewPermission{
+		"@officer:server": {crew: map[string]struct{}{"maren": {}, "nonexistent": {}}},
+	}}
+	err := ValidateAuthCrews(auth, []string{"maren", "crest", "bosun"})
+	if err == nil {
+		t.Fatal("expected error for unknown crew")
+	}
+	if !strings.Contains(err.Error(), "nonexistent") {
+		t.Errorf("expected error to name the unknown crew, got: %v", err)
+	}
+}
+
+func TestValidateAuthCrews_NilAuth(t *testing.T) {
+	if err := ValidateAuthCrews(nil, []string{"maren", "crest"}); err != nil {
+		t.Errorf("expected no error for nil auth, got: %v", err)
 	}
 }
