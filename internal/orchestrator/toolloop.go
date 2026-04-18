@@ -46,20 +46,22 @@ type loopResult struct {
 // once with only freshUserMsg. Mid-loop errors (iteration > 0) are NOT
 // retried because the in-flight state is complex.
 func (o *Orchestrator) runToolLoop(ctx context.Context, c crew.Crew, roomID string, buf *ctxbuf.ConversationBuffer, freshUserMsg anthropic.MessageParam, messages []anthropic.MessageParam) (*loopResult, error) {
-	crewTools := o.tools.ForCrew(c.Tools())
+	// Build params once — Messages is set per iteration (and swapped on retry).
+	// This prevents drift if new fields are added to the params struct later.
+	params := anthropic.MessageNewParams{
+		Model:     anthropic.Model(c.Model()),
+		MaxTokens: maxTokens,
+		System: []anthropic.TextBlockParam{
+			{Text: c.SystemPrompt()},
+		},
+		Tools: o.tools.ForCrew(c.Tools()),
+	}
 
 	var turns []anthropic.MessageParam
 
 	for i := range maxToolIterations {
-		resp, err := o.client.New(ctx, anthropic.MessageNewParams{
-			Model:     anthropic.Model(c.Model()),
-			MaxTokens: maxTokens,
-			System: []anthropic.TextBlockParam{
-				{Text: c.SystemPrompt()},
-			},
-			Messages: messages,
-			Tools:    crewTools,
-		})
+		params.Messages = messages
+		resp, err := o.client.New(ctx, params)
 		if err != nil {
 			// Defence-in-depth: on iteration 0, detect orphaned tool_result
 			// 400 and recover by clearing the buffer and retrying once.
@@ -68,16 +70,9 @@ func (o *Orchestrator) runToolLoop(ctx context.Context, c crew.Crew, roomID stri
 					"room", roomID, "crew", c.Name(), "err", err)
 				buf.Clear()
 				messages = []anthropic.MessageParam{freshUserMsg}
+				params.Messages = messages
 
-				retryResp, retryErr := o.client.New(ctx, anthropic.MessageNewParams{
-					Model:     anthropic.Model(c.Model()),
-					MaxTokens: maxTokens,
-					System: []anthropic.TextBlockParam{
-						{Text: c.SystemPrompt()},
-					},
-					Messages: messages,
-					Tools:    crewTools,
-				})
+				retryResp, retryErr := o.client.New(ctx, params)
 				if retryErr != nil {
 					return nil, fmt.Errorf("anthropic api (retry after buffer clear): %w", retryErr)
 				}
