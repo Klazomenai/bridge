@@ -338,34 +338,25 @@ func TestAdd_PureTextStillWorks(t *testing.T) {
 	assertValidSequence(t, msgs)
 }
 
-// TestAdd_SoftMaxTurnsOvershoot verifies that when the nearest safe
-// boundary is past minEvict, the buffer transiently exceeds maxEntries
-// rather than splitting a round-trip. Documents the soft-maxTurns caveat
-// from the package comment.
-func TestAdd_SoftMaxTurnsOvershoot(t *testing.T) {
+// TestAdd_SoftMaxTurnsOvershootClearsBuffer verifies that when a single
+// tool-use turn exceeds maxEntries and the only safe boundary (the initial
+// user-text at index 0) is below minEvict, the evictor falls back to
+// Clear() rather than splitting the turn. The user notices context loss
+// ("Maren forgot what we were talking about") but the invariant holds.
+func TestAdd_SoftMaxTurnsOvershootClearsBuffer(t *testing.T) {
 	buf := ctxbuf.NewConversationBuffer(3) // maxEntries = 6
 
 	// One big round-trip: 1 user + 3 tool rounds + 1 final = 8 entries.
-	// This exceeds maxEntries immediately, but there's no safe boundary
-	// to evict to (the only user(text) is at index 0, which is below
-	// minEvict=2 by the time we're done). Expected behaviour: buffer
-	// retains all 8 entries — the single-turn overshoot case — rather
-	// than clearing because the first message IS the safe boundary
-	// covering the entire buffer.
+	// This exceeds maxEntries. The only user-text boundary is at index 0,
+	// which is below minEvict=2 by the time eviction fires. No safe
+	// boundary exists at or after minEvict → Clear().
 	addToolTurn(buf, "once", 3)
 
 	msgs := buf.Messages()
 	assertValidSequence(t, msgs)
-	// The buffer should retain all 8 entries: the only boundary is msg[0]
-	// itself, and findFirstSafeEvictionPoint at minEvict=2 walks forward
-	// looking for the NEXT boundary after minEvict, which doesn't exist →
-	// Clear() fires. With Clear() semantics the buffer is empty after
-	// this turn.
-	//
-	// This documents the fallback: a single ongoing tool-use round-trip
-	// whose first message predates minEvict IS in fact "unbounded" from
-	// the evictor's perspective. The user notices context loss but the
-	// invariant holds.
+	// Buffer is empty: the fallback fired because the only boundary was
+	// before minEvict. The post-condition guard then clears any residual
+	// non-user-text messages left by the tool round.
 	if len(msgs) != 0 {
 		t.Errorf("expected empty buffer (Clear fallback), got %d entries", len(msgs))
 	}

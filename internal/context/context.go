@@ -9,21 +9,21 @@
 // After every Add, the buffer is a valid Anthropic API messages array: every
 // tool_result block in any message has the matching tool_use block in the
 // immediately preceding assistant message. Equivalently, the buffer either
-// starts with a user message whose content contains only text blocks, or is
-// empty. This protects against the "orphaned tool_result" 400 trap (see
-// issue #99 in klazomenai/bridge).
+// starts with a user message with no tool_result blocks, or is empty. This
+// protects against the "orphaned tool_result" 400 trap (see issue #99 in
+// klazomenai/bridge).
 //
-// # Soft maxTurns
+// # Eviction and context loss
 //
 // To preserve the invariant, eviction does not split tool-use round-trips.
-// It evicts whole turns — from the minimum-evict point forward to the next
-// fresh Captain input (a user message with only text blocks). When that
-// boundary is further than maxEntries from the start, the buffer transiently
-// overshoots maxTurns until the next Captain input arrives. Worst case is
-// bounded by maxEntries + (longest-round-trip - 1). When no boundary exists
-// at all (the entire buffer is one ongoing tool-use loop), the buffer is
-// cleared; losing history is strictly better than producing a permanent 400
-// loop.
+// It evicts whole turns by searching from the minimum-evict point forward
+// for the next fresh Captain input (a user message with no tool_result
+// blocks) and trimming everything before that boundary. If no such boundary
+// exists at or after the minimum-evict point, the buffer is cleared rather
+// than keeping an oversized prefix, even if the current start of the buffer
+// is itself a valid boundary. This favours preserving the Anthropic
+// messages-array invariant over retaining additional history; losing history
+// is strictly better than producing a permanent 400 loop.
 package context
 
 import (
@@ -57,11 +57,12 @@ func NewConversationBuffer(maxTurns int) *ConversationBuffer {
 // are never split. See the package doc for the invariant.
 //
 // A post-condition guard enforces the invariant at the tail of the method:
-// if the resulting buffer does not start with a user-text message, it is
-// cleared. This protects the invariant even if the caller breaks their
-// protocol (e.g. adds an assistant message before a user message), and in
-// particular prevents a cleared buffer from being repopulated with
-// mid-turn tool messages that would leave the first entry malformed.
+// if the resulting buffer does not start with a user message with no
+// tool_result blocks, it is cleared. This protects the invariant even if
+// the caller breaks their protocol (e.g. adds an assistant message before
+// a user message), and in particular prevents a cleared buffer from being
+// repopulated with mid-turn tool messages that would leave the first entry
+// malformed.
 func (b *ConversationBuffer) Add(msg anthropic.MessageParam) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -85,13 +86,13 @@ func (b *ConversationBuffer) Add(msg anthropic.MessageParam) {
 		}
 	}
 
-	// Post-condition guard: the first message MUST be a user-text entry,
-	// otherwise the buffer cannot be a prefix of a valid Anthropic API
-	// messages array. Clear if violated.
+	// Post-condition guard: the first message MUST be a user message with no
+	// tool_result blocks, otherwise the buffer cannot be a prefix of a valid
+	// Anthropic API messages array. Clear if violated.
 	if len(b.messages) > 0 {
 		first := b.messages[0]
 		if first.Role != anthropic.MessageParamRoleUser || containsToolResult(first) {
-			slog.Warn("context: buffer first message is not user-text, clearing",
+			slog.Warn("context: buffer first message is not a user message with no tool_result blocks, clearing",
 				"first_role", first.Role, "size", len(b.messages))
 			b.messages = nil
 		}
@@ -129,9 +130,9 @@ func containsToolResult(msg anthropic.MessageParam) bool {
 }
 
 // findFirstSafeEvictionPoint returns the first index i >= minEvict where
-// msgs[i] is a user message whose content contains only text blocks — i.e.
-// a fresh Captain input with no tool_result. Slicing msgs[i:] yields a
-// valid Anthropic API messages array per the buffer invariant.
+// msgs[i] is a user message with no tool_result blocks — i.e. a fresh
+// Captain input. Slicing msgs[i:] yields a valid Anthropic API messages
+// array per the buffer invariant.
 //
 // Returns -1 if no such boundary exists at or after minEvict.
 func findFirstSafeEvictionPoint(msgs []anthropic.MessageParam, minEvict int) int {
