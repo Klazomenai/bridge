@@ -855,6 +855,54 @@ func TestMessageAllowedDefaultCrewExplicit(t *testing.T) {
 	}
 }
 
+// --- Officer integration tests (bridge#106) ---
+// These exercise the full handleMessage() path where prefix routing +
+// auth check + orchestrator dispatch all interact.
+
+func TestMessageAllowedOfficerCorrectCrew(t *testing.T) {
+	orch := &mockOrch{responses: []orchestrator.Response{{Text: "Signal received.", CrewID: "crest", Verbosity: "dispatch"}}}
+	sender := &mockSender{}
+	b := newTestBot(t, orch, sender, "@bridge:server")
+	// Override auth: officer only authorized for crest.
+	b.cfg.UserAuth = &UserAuthorization{users: map[id.UserID]*crewPermission{
+		"@officer:server": {crew: map[string]struct{}{"crest": {}}},
+	}}
+
+	// Officer sends Crest-prefixed message — prefix routing extracts "crest",
+	// auth check passes (crest is in the officer's crew list), orchestrator called.
+	b.handleMessage(t.Context(), textEvent("@officer:server", "!room:server", "Crest, check the inbox"))
+
+	if len(orch.calls) != 1 {
+		t.Fatalf("expected 1 orchestrator call for authorized crew, got %d", len(orch.calls))
+	}
+	if orch.crewRequests[0] != "crest" {
+		t.Errorf("expected crew request 'crest', got %q", orch.crewRequests[0])
+	}
+}
+
+func TestMessageDeniedOfficerWrongCrewExplicit(t *testing.T) {
+	orch := &mockOrch{responses: []orchestrator.Response{{Text: "Aye"}}}
+	sender := &mockSender{}
+	b := newTestBot(t, orch, sender, "@bridge:server")
+	// Use an authorized default crew so this test only passes if the explicit
+	// "Maren, ..." prefix is actually extracted and routed to maren.
+	b.cfg.DefaultCrew = "crest"
+	// Override auth: officer only authorized for crest.
+	b.cfg.UserAuth = &UserAuthorization{users: map[id.UserID]*crewPermission{
+		"@officer:server": {crew: map[string]struct{}{"crest": {}}},
+	}}
+
+	// Officer sends Maren-prefixed message — prefix routing must extract "maren";
+	// auth check then fails (maren is NOT in the officer's crew list), so the
+	// message is silently dropped. If prefix extraction breaks, fallback to the
+	// default crew ("crest") would authorize the request and this test would fail.
+	b.handleMessage(t.Context(), textEvent("@officer:server", "!room:server", "Maren, hull check"))
+
+	if len(orch.calls) != 0 {
+		t.Fatalf("expected 0 orchestrator calls for unauthorized explicit crew, got %d", len(orch.calls))
+	}
+}
+
 func TestAuthNilDeniesAll(t *testing.T) {
 	orch := &mockOrch{responses: []orchestrator.Response{{Text: "Aye"}}}
 	sender := &mockSender{}
