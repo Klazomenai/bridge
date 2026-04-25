@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.5](https://github.com/Klazomenai/bridge/compare/v0.1.0-alpha.4...v0.1.0-alpha.5) (2026-04-25)
+
+
+### 🔧 Hull Repairs
+
+* **bot:** suppress ERROR log on already-left disallowed room invite 🐛 ([#119](https://github.com/Klazomenai/bridge/issues/119)) ([8282b5b](https://github.com/Klazomenai/bridge/commit/8282b5b785a0963339cc26e573b3ec721debe254)), closes [#105](https://github.com/Klazomenai/bridge/issues/105)
+
 ## [0.1.0-alpha.4](https://github.com/Klazomenai/bridge/compare/v0.1.0-alpha.3...v0.1.0-alpha.4) (2026-04-18)
 
 
