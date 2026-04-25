@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"go.mau.fi/util/dbutil"
 	_ "modernc.org/sqlite" // pure-Go SQLite driver, no CGo required
@@ -176,6 +177,22 @@ func (b *Bot) isRoomAllowed(roomID id.RoomID) bool {
 	return ok
 }
 
+// isAlreadyLeftError reports whether err is the homeserver's "cannot leave a
+// room you are not in" response, which fires when LeaveRoom is called for a
+// room the bot has already left (e.g. duplicate invite events from rapid
+// client clicks). Restricted to M_FORBIDDEN responses whose message indicates
+// the not-joined condition, so genuine forbidden errors continue to surface.
+func isAlreadyLeftError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if !errors.Is(err, mautrix.MForbidden) {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "not joined") || strings.Contains(msg, "cannot leave")
+}
+
 // registerHandlers wires up event handlers on the syncer.
 func (b *Bot) registerHandlers() {
 	syncer := b.client.Syncer.(*mautrix.DefaultSyncer)
@@ -190,7 +207,11 @@ func (b *Bot) registerHandlers() {
 			member.Membership == event.MembershipInvite {
 			if !b.isRoomAllowed(evt.RoomID) {
 				if _, err := b.client.LeaveRoom(ctx, evt.RoomID); err != nil {
-					slog.Error("bot: failed to reject invite from disallowed room", "room", evt.RoomID, "err", err)
+					if isAlreadyLeftError(err) {
+						slog.Debug("bot: already left disallowed room", "room", evt.RoomID)
+					} else {
+						slog.Error("bot: failed to reject invite from disallowed room", "room", evt.RoomID, "err", err)
+					}
 				} else {
 					slog.Warn("bot: rejected invite from disallowed room", "room", evt.RoomID)
 				}
