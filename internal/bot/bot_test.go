@@ -989,3 +989,78 @@ func TestTimeoutSendsGracefulMessage(t *testing.T) {
 		t.Error("typing should be cancelled after timeout")
 	}
 }
+
+// --- isAlreadyLeftError tests ---
+
+func TestIsAlreadyLeftErrorRespError(t *testing.T) {
+	// The exact server response from the issue: M_FORBIDDEN with the
+	// "cannot leave if not joined" message produced by Synapse-family
+	// homeservers when LeaveRoom is called for a room already left.
+	err := mautrix.RespError{
+		ErrCode: "M_FORBIDDEN",
+		Err:     "cannot leave if not joined, invited or knocked",
+	}
+	if !isAlreadyLeftError(err) {
+		t.Errorf("expected true for M_FORBIDDEN with 'cannot leave', got false")
+	}
+}
+
+func TestIsAlreadyLeftErrorWrappedHTTPError(t *testing.T) {
+	resp := mautrix.RespError{
+		ErrCode: "M_FORBIDDEN",
+		Err:     "cannot leave if not joined, invited or knocked",
+	}
+	httpErr := mautrix.HTTPError{
+		Response:  &http.Response{StatusCode: http.StatusForbidden},
+		RespError: &resp,
+	}
+	if !isAlreadyLeftError(httpErr) {
+		t.Errorf("expected true for HTTPError wrapping M_FORBIDDEN/cannot-leave, got false")
+	}
+}
+
+func TestIsAlreadyLeftErrorNotJoinedVariant(t *testing.T) {
+	// Defence against alternate phrasings from non-Synapse servers
+	// (e.g. Tuwunel/Conduit-family) — match on "not joined" too.
+	err := mautrix.RespError{
+		ErrCode: "M_FORBIDDEN",
+		Err:     "User is not joined to room",
+	}
+	if !isAlreadyLeftError(err) {
+		t.Errorf("expected true for M_FORBIDDEN with 'not joined', got false")
+	}
+}
+
+func TestIsAlreadyLeftErrorOtherForbidden(t *testing.T) {
+	// Other M_FORBIDDEN reasons (banned, no permission) must still surface
+	// as ERROR — only the already-left subcase is downgraded.
+	err := mautrix.RespError{
+		ErrCode: "M_FORBIDDEN",
+		Err:     "You are banned from this room",
+	}
+	if isAlreadyLeftError(err) {
+		t.Errorf("expected false for unrelated M_FORBIDDEN, got true")
+	}
+}
+
+func TestIsAlreadyLeftErrorNonForbidden(t *testing.T) {
+	err := mautrix.RespError{
+		ErrCode: "M_LIMIT_EXCEEDED",
+		Err:     "Too many requests",
+	}
+	if isAlreadyLeftError(err) {
+		t.Errorf("expected false for non-M_FORBIDDEN error, got true")
+	}
+}
+
+func TestIsAlreadyLeftErrorPlainError(t *testing.T) {
+	if isAlreadyLeftError(errors.New("network timeout")) {
+		t.Errorf("expected false for non-mautrix error, got true")
+	}
+}
+
+func TestIsAlreadyLeftErrorNil(t *testing.T) {
+	if isAlreadyLeftError(nil) {
+		t.Errorf("expected false for nil error, got true")
+	}
+}
