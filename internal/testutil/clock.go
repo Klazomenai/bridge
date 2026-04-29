@@ -13,9 +13,9 @@ import (
 //
 // Production code that takes a clock should accept clockwork.Clock
 // directly (the interface lives in github.com/jonboulle/clockwork, not
-// here — internal/testutil is test-only). Production wiring passes
-// clockwork.NewRealClock() from cmd/bridge/main.go; tests pass the
-// *clockwork.FakeClock returned by this constructor.
+// here — internal/testutil is test-only). Production wiring can pass
+// clockwork.NewRealClock(); tests pass the *clockwork.FakeClock returned
+// by this constructor.
 //
 //	fc := testutil.NewFakeClock()
 //	mgr := NewWithClock(fc) // production constructor takes clockwork.Clock

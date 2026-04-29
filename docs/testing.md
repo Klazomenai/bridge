@@ -158,16 +158,18 @@ func TestFooTTL(t *testing.T) {
 
 - Unit tests should complete in **under 1 second** per package.
 - Integration tests (mock servers, lifecycle drivers) should complete in **under 5 seconds** per test.
-- Full suite (`go test ./...`) target: **under 90 seconds** including `-race`.
+- Full suite (`go test ./...`) target: **under 90 seconds** locally; CI is currently faster because it doesn't run `-race` (see below).
 
 If you find yourself adding a `time.Sleep` to make a test pass, you almost certainly want a fake clock instead.
 
 ## Race detection
 
-CI runs the suite under `-race`. Locally:
+CI today runs the suite **without** `-race` (see `.github/workflows/ci.yml`) — coverage is collected with `-covermode=atomic` instead. Adopting `-race` in CI is tracked under bridge#131 (test-runtime budget); the rough cost is ~2-3× wall-clock per package, which is the reason the work hasn't already landed.
+
+Until that lands, run `-race` locally before pushing any change that touches concurrent code:
 
 ```sh
 go test -tags goolm -race -count=1 ./...
 ```
 
-`-race` roughly triples test runtime; budget accordingly.
+The bridge has a small enough test surface that `-race` runs in a few seconds locally; there's no excuse to skip it on a concurrency-touching PR. CI failures from `-race`-only flakes will surface on the developer's laptop, not in production triage.

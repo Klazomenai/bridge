@@ -1,6 +1,7 @@
 package testutil_test
 
 import (
+	"sync"
 	"testing"
 	"time"
 
@@ -15,14 +16,23 @@ func TestVerifyNone_NoLeaks(t *testing.T) {
 }
 
 // TestVerifyNone_CleanGoroutine confirms VerifyNone passes when a goroutine
-// is spawned but cleanly shuts down before VerifyNone is called.
+// is spawned but joins cleanly before VerifyNone is called.
+//
+// Uses sync.WaitGroup as the join mechanism (NOT a channel close) because
+// `wg.Done()` happens *after* the goroutine's body returns: by the time
+// `wg.Wait()` returns, the goroutine has fully exited, with no return-path
+// race window for goleak to observe. A channel close inside the goroutine
+// would only signal that the close call ran, not that the goroutine has
+// finished returning. This is the pattern downstream tests should model.
 func TestVerifyNone_CleanGoroutine(t *testing.T) {
 	defer testutil.VerifyNone(t)
-	done := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(1)
 	go func() {
-		close(done)
+		defer wg.Done()
+		// goroutine body — anything that completes
 	}()
-	<-done
+	wg.Wait()
 }
 
 // TestNewFakeClock_AdvancesDeterministically confirms the fake clock advances
