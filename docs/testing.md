@@ -28,7 +28,18 @@ func TestFoo(t *testing.T) {
 If a test runs in a binary where a prior test or `TestMain` started a long-lived goroutine (e.g. a package-level singleton), use `goleak.IgnoreCurrent()` to baseline:
 
 ```go
-defer testutil.VerifyNone(t, goleak.IgnoreCurrent())
+import (
+    "testing"
+
+    "go.uber.org/goleak"
+
+    "klazomenai/bridge/internal/testutil"
+)
+
+func TestFoo(t *testing.T) {
+    defer testutil.VerifyNone(t, goleak.IgnoreCurrent())
+    // ... test body ...
+}
 ```
 
 Prefer per-test `IgnoreCurrent` over a `TestMain`-level `goleak.VerifyTestMain` — the per-test scope keeps the leak surface tightest. Reach for `VerifyTestMain` only when an entire package's tests share the same baseline.
@@ -36,7 +47,16 @@ Prefer per-test `IgnoreCurrent` over a `TestMain`-level `goleak.VerifyTestMain` 
 ### Common false positives
 
 - The Go runtime's `sync.Pool` cleaner goroutine: handled automatically by `goleak`.
-- `httptest.Server` not closed: register `t.Cleanup(srv.Close)` immediately after creation.
+- `httptest.Server` not closed: call `defer srv.Close()` **after** the `defer testutil.VerifyNone(t)` line. Go runs deferred calls in LIFO order, so the server closes first and `VerifyNone` runs last — no false-positive listener-goroutine leak. (`t.Cleanup` callbacks run AFTER deferred calls and would arrive too late for the leak check.)
+
+  ```go
+  func TestFoo(t *testing.T) {
+      defer testutil.VerifyNone(t) // runs LAST (deferred first → LIFO)
+      srv := httptest.NewServer(handler)
+      defer srv.Close()            // runs FIRST (deferred second)
+      // ... test body ...
+  }
+  ```
 - Timer goroutines from `time.AfterFunc`: cancel the timer before test exit (`timer.Stop()`).
 
 ## Fake clocks (`clockwork`)
@@ -62,16 +82,62 @@ func TestTTLEviction(t *testing.T) {
 
 ### Production wiring
 
-Production constructors that need a clock should accept the `testutil.Clock` interface, not a concrete `*clockwork.FakeClock`. Pass `clockwork.NewRealClock()` from `main` (or wherever the production wiring lives):
+Production constructors that need a clock should accept the `clockwork.Clock` interface (which lives in `github.com/jonboulle/clockwork`, NOT in `internal/testutil` — production code must not import a test-only package). Pass `clockwork.NewRealClock()` from `cmd/bridge/main.go`; tests pass `testutil.NewFakeClock()`.
 
 ```go
 // internal/foo/foo.go
-import "klazomenai/bridge/internal/testutil"
+package foo
 
-func NewFoo(clk testutil.Clock) *Foo { ... }
+import (
+    "github.com/jonboulle/clockwork"
+)
 
+type Foo struct {
+    clk clockwork.Clock
+    // ...
+}
+
+func NewFoo(clk clockwork.Clock) *Foo {
+    return &Foo{clk: clk}
+}
+```
+
+```go
 // cmd/bridge/main.go
-foo := foo.NewFoo(clockwork.NewRealClock())
+package main
+
+import (
+    "github.com/jonboulle/clockwork"
+
+    "klazomenai/bridge/internal/foo"
+)
+
+func main() {
+    f := foo.NewFoo(clockwork.NewRealClock())
+    _ = f
+}
+```
+
+```go
+// internal/foo/foo_test.go
+package foo_test
+
+import (
+    "testing"
+    "time"
+
+    "klazomenai/bridge/internal/foo"
+    "klazomenai/bridge/internal/testutil"
+)
+
+func TestFooTTL(t *testing.T) {
+    defer testutil.VerifyNone(t)
+    fc := testutil.NewFakeClock()
+    f := foo.NewFoo(fc)
+    fc.Advance(2 * time.Hour)
+    // ... assert TTL behaviour ...
+    _ = f
+}
 ```
 
 ### When NOT to use a fake clock
