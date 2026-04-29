@@ -5,8 +5,10 @@ go 1.25.0
 require (
 	github.com/anthropics/anthropic-sdk-go v1.27.1
 	github.com/emersion/go-imap/v2 v2.0.0-beta.8
+	github.com/jonboulle/clockwork v0.5.0
 	github.com/prometheus/prometheus v0.311.2
 	go.mau.fi/util v0.9.7
+	go.uber.org/goleak v1.3.0
 	gopkg.in/yaml.v3 v3.0.1
 	maunium.net/go/mautrix v0.26.4
 	modernc.org/sqlite v1.47.0

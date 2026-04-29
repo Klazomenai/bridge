@@ -17,6 +17,7 @@ import (
 	ctxbuf "klazomenai/bridge/internal/context"
 	"klazomenai/bridge/internal/crew"
 	"klazomenai/bridge/internal/orchestrator"
+	"klazomenai/bridge/internal/testutil"
 	"klazomenai/bridge/internal/tools"
 )
 
@@ -218,6 +219,7 @@ func newTestOrchestratorWithMock(t *testing.T, toolReg *tools.Registry, mock *mo
 // =====================================================================
 
 func TestNewCreatesOrchestrator(t *testing.T) {
+	defer testutil.VerifyNone(t)
 	reg := newTestRegistry(t)
 	mgr := ctxbuf.NewManager(ctxbuf.DefaultMaxTurns)
 	toolReg := newToolRegistry()
