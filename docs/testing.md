@@ -55,9 +55,9 @@ Prefer per-test `IgnoreCurrent` over a `TestMain`-level `goleak.VerifyTestMain` 
 
   ```go
   func TestFoo(t *testing.T) {
-      defer testutil.VerifyNone(t) // runs LAST (deferred first → LIFO)
+      defer testutil.VerifyNone(t) // first defer statement; runs LAST
       srv := httptest.NewServer(handler)
-      defer srv.Close()            // runs FIRST (deferred second)
+      defer srv.Close()            // second defer statement; runs FIRST
       // ... test body ...
   }
   ```
