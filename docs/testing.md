@@ -7,7 +7,11 @@ This document collects test-writing patterns shared across the codebase. New pat
 Tests that spawn goroutines should assert no goroutines escape the test boundary. Use `testutil.VerifyNone`:
 
 ```go
-import "klazomenai/bridge/internal/testutil"
+import (
+    "testing"
+
+    "klazomenai/bridge/internal/testutil"
+)
 
 func TestFoo(t *testing.T) {
     defer testutil.VerifyNone(t)
@@ -15,7 +19,7 @@ func TestFoo(t *testing.T) {
 }
 ```
 
-`VerifyNone` runs at test cleanup time. If any goroutine started during the test is still running when the test exits, the test fails with a goroutine dump pointing to the leak.
+`VerifyNone` runs via `defer` when the test function returns, before any `t.Cleanup` callbacks. If any goroutine started during the test is still running at that point, the test fails with a goroutine dump pointing to the leak. (See "Common false positives" below for why this ordering matters when servers and listeners are involved.)
 
 ### When to use
 
@@ -64,13 +68,18 @@ Prefer per-test `IgnoreCurrent` over a `TestMain`-level `goleak.VerifyTestMain` 
 Tests that assert time-dependent behaviour — TTL eviction, deadlines, retry backoff, periodic sweeps — must inject a clock interface and use a fake clock in tests. Real `time.Sleep` waits are a primary source of CI flake on slow runners.
 
 ```go
-import "klazomenai/bridge/internal/testutil"
+import (
+    "testing"
+    "time"
+
+    "klazomenai/bridge/internal/testutil"
+)
 
 func TestTTLEviction(t *testing.T) {
     defer testutil.VerifyNone(t)
     fc := testutil.NewFakeClock()
 
-    mgr := NewManagerWithClock(fc) // production constructor accepts testutil.Clock
+    mgr := NewManagerWithClock(fc) // production constructor accepts clockwork.Clock
 
     // ... add some entries ...
     fc.Advance(2 * time.Hour) // simulate two hours passing
