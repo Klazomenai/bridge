@@ -39,40 +39,13 @@ fi
 # package keys in the YAML. Computed once.
 module="$(go list -m)"
 
-# Per-package coverage. Aggregates statement-level coverage from the profile.
-# `go tool cover -func` emits per-function lines plus a `total:` line; we
-# group functions by their package directory.
+# Per-package statement coverage from the profile.
 #
-# Each output line: "<package> <coverage-percent>"
-per_package_coverage() {
-    go tool cover -func="$profile" | awk -v module="$module" '
-        # Skip the trailing total line — handled separately.
-        /^total:/ { next }
-        {
-            # Field 1 is "<file-path>:<line>:" — strip everything after the
-            # last "/" to get the package directory; strip the module prefix.
-            path = $1
-            sub(/\/[^\/]+:[0-9]+:$/, "", path)
-            sub("^" module "/", "", path)
-
-            # Field 3 is "NN.N%". Strip the percent and accumulate.
-            cov = $3
-            gsub(/%/, "", cov)
-            covered_pct[path] += cov + 0
-            n[path]++
-        }
-        END {
-            for (p in covered_pct) {
-                printf "%s %.1f\n", p, covered_pct[p] / n[p]
-            }
-        }
-    '
-}
-
-# `go tool cover -func`'s per-function coverage averaged is NOT statement
-# coverage. The proper number comes from running `go test` itself with -cover
-# but here we have only the profile. Statement coverage from a profile is
-# computable: statements covered / statements total per package. Re-derive it.
+# Note: `go tool cover -func` emits *function*-level coverage; averaging those
+# numbers per package would NOT yield statement coverage because functions
+# have different statement counts. The correct number is statements covered /
+# statements total per package, which we derive directly from the profile
+# below. The per-function tool is used only for the `total:` line.
 per_package_statement_coverage() {
     awk -v module="$module" '
         NR == 1 { next }   # skip mode line: "mode: atomic"

@@ -36,11 +36,18 @@ jobs:
         # The override marker `[allow-coverage-drop]` in a PR body bypasses
         # the gate but still surfaces the result for visibility. Useful for
         # deliberate refactors that remove dead code (and thus coverage).
+        #
+        # `set -o pipefail` is explicit (GitHub Actions enables it by default
+        # in the runner shell, but `set +e` doesn't disable pipefail and we
+        # want the contract to survive any future runner config drift).
+        # Without it, `rc=$?` would capture `tee`'s exit code (always 0) and
+        # silently mask gate failures.
         run: |
           set +e
+          set -o pipefail
           .github/scripts/check-coverage.sh coverage.out | tee coverage-report.txt
           rc=$?
-          set -e
+          set +o pipefail
           if [[ "$rc" -ne 0 ]]; then
             if [[ "${{ github.event_name }}" == "pull_request" ]] \
                 && grep -qF '[allow-coverage-drop]' <<< "${{ github.event.pull_request.body }}"; then

@@ -174,15 +174,23 @@ existing_comment_id="$(gh api \
     | head -1 || true)"
 
 if [[ -n "$existing_comment_id" ]]; then
-    gh api \
-        "repos/${repo}/issues/comments/${existing_comment_id}" \
-        -X PATCH \
-        -F body=@/tmp/coverage-comment.md >/dev/null && \
+    if gh api \
+            "repos/${repo}/issues/comments/${existing_comment_id}" \
+            -X PATCH \
+            -F body=@/tmp/coverage-comment.md >/dev/null; then
         echo "::notice::updated coverage comment ($existing_comment_id)"
+    else
+        echo "::warning::failed to update coverage comment ($existing_comment_id); skipping"
+        exit 0
+    fi
 else
-    gh api \
-        "repos/${repo}/issues/${PR_NUMBER}/comments" \
-        -X POST \
-        -F body=@/tmp/coverage-comment.md >/dev/null && \
+    if gh api \
+            "repos/${repo}/issues/${PR_NUMBER}/comments" \
+            -X POST \
+            -F body=@/tmp/coverage-comment.md >/dev/null; then
         echo "::notice::posted new coverage comment"
+    else
+        echo "::warning::failed to post new coverage comment; skipping"
+        exit 0
+    fi
 fi
