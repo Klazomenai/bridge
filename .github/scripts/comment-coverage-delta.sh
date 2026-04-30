@@ -1,0 +1,188 @@
+#!/usr/bin/env bash
+# Post a coverage-delta comment on the current PR.
+#
+# Usage:
+#   .github/scripts/comment-coverage-delta.sh <pr-coverage-profile>
+#
+# Best-effort: this script never fails the CI run. It tries to fetch the
+# most recent main-branch coverage artefact, computes per-package deltas,
+# and posts a single comment on the PR. If anything goes wrong (no main
+# artefact, gh API hiccup, parser failure), it logs a warning and exits 0.
+#
+# Required env:
+#   GH_TOKEN     — repo read + PR write
+#   PR_NUMBER    — pull request number
+#
+# Optional env:
+#   GITHUB_REPOSITORY — owner/repo (auto-set in Actions)
+
+set -uo pipefail
+
+if [[ $# -ne 1 ]]; then
+    echo "::warning::usage: $0 <pr-coverage-profile>" >&2
+    exit 0
+fi
+
+pr_profile="$1"
+
+if [[ ! -f "$pr_profile" ]]; then
+    echo "::warning::PR coverage profile not found: $pr_profile"
+    exit 0
+fi
+
+if [[ -z "${PR_NUMBER:-}" ]]; then
+    echo "::warning::PR_NUMBER not set; skipping delta comment"
+    exit 0
+fi
+
+repo="${GITHUB_REPOSITORY:-$(gh repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null || echo)}"
+if [[ -z "$repo" ]]; then
+    echo "::warning::could not determine repo; skipping delta comment"
+    exit 0
+fi
+
+module="$(go list -m)"
+
+# Compute per-package statement coverage from a profile. Output: "<pkg> <pct>"
+#
+# Mirrors the parser in check-coverage.sh — kept inline rather than sourced
+# so this script stays standalone.
+per_package() {
+    local profile="$1"
+    awk -v module="$module" '
+        NR == 1 { next }
+        {
+            split($1, a, ":")
+            path = a[1]
+            sub(/\/[^\/]+$/, "", path)
+            sub("^" module "/", "", path)
+            stmts[path] += $2
+            if ($3 + 0 > 0) { covered[path] += $2 }
+        }
+        END {
+            for (p in stmts) {
+                if (stmts[p] > 0) {
+                    printf "%s %.1f\n", p, (covered[p] / stmts[p]) * 100
+                }
+            }
+        }
+    ' "$profile"
+}
+
+# Try to download the most recent main-branch coverage artefact. Returns
+# the path to coverage.out on success, empty string otherwise.
+fetch_main_profile() {
+    local workdir
+    workdir="$(mktemp -d)"
+
+    # Find the most recent successful CI run on main.
+    local run_id
+    run_id="$(gh run list \
+        --repo "$repo" \
+        --workflow CI \
+        --branch main \
+        --status success \
+        --limit 1 \
+        --json databaseId \
+        --jq '.[0].databaseId' 2>/dev/null || true)"
+
+    if [[ -z "$run_id" || "$run_id" == "null" ]]; then
+        echo "::warning::no successful main-branch CI run found for delta"
+        return
+    fi
+
+    # Pull its coverage artefact. Artefact name in ci.yml is keyed on the
+    # commit SHA, not the run id, so take whichever artefact starts with
+    # `coverage-push-` from that run; there's only one per run.
+    if ! gh run download "$run_id" \
+        --repo "$repo" \
+        --dir "$workdir" \
+        --pattern 'coverage-push-*' >/dev/null 2>&1; then
+        echo "::warning::failed to download main coverage artefact for run $run_id"
+        return
+    fi
+
+    # Find the downloaded coverage.out (first match wins).
+    local found
+    found="$(find "$workdir" -name 'coverage.out' -type f | head -1)"
+    if [[ -n "$found" ]]; then
+        echo "$found"
+    fi
+}
+
+main_profile="$(fetch_main_profile)"
+
+# Build the comment body.
+# shellcheck disable=SC2016 # printf format strings contain literal backticks (markdown code-formatting), not command substitution
+{
+    echo "## 📊 Coverage report"
+    echo ""
+
+    if [[ -n "$main_profile" && -f "$main_profile" ]]; then
+        echo "Per-package statement coverage on this PR vs the most recent successful \`main\` build."
+        echo ""
+        echo "| Package | Main | PR | Δ |"
+        echo "|---|---|---|---|"
+
+        # Build associative arrays for both profiles, then walk.
+        declare -A pr_cov main_cov
+        while read -r pkg pct; do pr_cov["$pkg"]="$pct"; done < <(per_package "$pr_profile")
+        while read -r pkg pct; do main_cov["$pkg"]="$pct"; done < <(per_package "$main_profile")
+
+        # Union of packages, sorted for stable output.
+        for pkg in $(printf '%s\n%s\n' "${!pr_cov[@]}" "${!main_cov[@]}" | sort -u); do
+            m="${main_cov[$pkg]:-}"
+            p="${pr_cov[$pkg]:-}"
+            if [[ -z "$m" ]]; then
+                printf '| `%s` | — | %s%% | new |\n' "$pkg" "$p"
+            elif [[ -z "$p" ]]; then
+                printf '| `%s` | %s%% | — | removed |\n' "$pkg" "$m"
+            else
+                delta="$(awk "BEGIN { printf \"%+.1f\", $p - $m }")"
+                arrow="="
+                if   awk "BEGIN { exit !($p > $m + 0.05) }"; then arrow="🔼"
+                elif awk "BEGIN { exit !($p < $m - 0.05) }"; then arrow="🔽"
+                fi
+                printf '| `%s` | %s%% | %s%% | %s %s |\n' "$pkg" "$m" "$p" "$arrow" "$delta"
+            fi
+        done
+    else
+        echo "Per-package statement coverage on this PR. (No main-branch baseline available; showing current values only.)"
+        echo ""
+        echo "| Package | Coverage |"
+        echo "|---|---|"
+        per_package "$pr_profile" | sort | while read -r pkg pct; do
+            printf '| `%s` | %s%% |\n' "$pkg" "$pct"
+        done
+    fi
+
+    echo ""
+    echo "Thresholds enforced via \`.github/coverage-thresholds.yaml\`. Override with \`[allow-coverage-drop]\` in the PR body for deliberate drops."
+    echo ""
+    echo "<sub>Posted by \`.github/scripts/comment-coverage-delta.sh\`. Best-effort; not gating.</sub>"
+} > /tmp/coverage-comment.md
+
+# Post (or update) the comment. We use a marker comment to avoid spamming
+# the PR on every push — find an existing comment with the marker and edit
+# it; otherwise create a new one.
+marker='<!-- bridge-coverage-delta-comment -->'
+echo "$marker" >> /tmp/coverage-comment.md
+
+existing_comment_id="$(gh api \
+    "repos/${repo}/issues/${PR_NUMBER}/comments" \
+    --jq ".[] | select(.body | contains(\"$marker\")) | .id" 2>/dev/null \
+    | head -1 || true)"
+
+if [[ -n "$existing_comment_id" ]]; then
+    gh api \
+        "repos/${repo}/issues/comments/${existing_comment_id}" \
+        -X PATCH \
+        -F body=@/tmp/coverage-comment.md >/dev/null && \
+        echo "::notice::updated coverage comment ($existing_comment_id)"
+else
+    gh api \
+        "repos/${repo}/issues/${PR_NUMBER}/comments" \
+        -X POST \
+        -F body=@/tmp/coverage-comment.md >/dev/null && \
+        echo "::notice::posted new coverage comment"
+fi

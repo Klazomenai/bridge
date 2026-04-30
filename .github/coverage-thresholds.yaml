@@ -1,0 +1,35 @@
+# Per-package coverage floors enforced by .github/scripts/check-coverage.sh.
+#
+# Thresholds are set at the current floor minus a small headroom band (1-3pt)
+# so the gate never fires a false-positive on day one. Raise deliberately,
+# never silently. To raise, file a small chore PR that bumps the value AFTER
+# the work that earned the higher number has merged.
+#
+# Aspirational targets (per bridge#130 issue body, post-M2-sweep) are noted
+# in line comments — they apply once the test issues that drive them
+# (#81/#86/#87/#88/#91/#121/#122) have all landed.
+#
+# Override: PRs that intentionally drop coverage (e.g. removing dead code)
+# can include [allow-coverage-drop] in the PR body to bypass the gate. The
+# CI run will still post the coverage delta as a comment for visibility.
+#
+# Repo-wide overall coverage is tracked under `total` (informational only,
+# not used for gating — per-package thresholds carry the security weight).
+
+packages:
+  internal/context:        97  # current 97.9% — security weight: high (block-aware eviction invariant)
+  internal/orchestrator:   92  # current 94.4% — security weight: high (multi-turn tool execution)
+  internal/crew:           95  # current 97.1% — security weight: high (auth validation)
+  internal/bot:            75  # current 77.6% — aspirational ≥80% after #86/#121/#122 land
+  internal/crest:          40  # current 44.8% — aspirational ≥75% after #81 lands
+  internal/health:         85  # current 88.9% — small package; aspirational ≥90% with #89's /metrics path coverage
+  internal/testutil:       95  # current 100.0% — new in #126; small package
+  internal/tools:          80  # current 89.1% — registry/dispatch
+  internal/tools/chips:    80  # current 86.8% — aspirational ≥85% after #83 sanitiser tests land
+  internal/tools/crest:    80  # current 89.2%
+  internal/tools/lookout:  80  # current 85.7%
+  internal/tools/maren:    90  # current 95.5% — aspirational ≥95% after #85 redaction-key tests
+
+# Repo-wide total (informational only; not gating). The existing 70% gate
+# from the prior CI step is superseded by the per-package thresholds above.
+total: 80
