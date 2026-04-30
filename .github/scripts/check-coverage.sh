@@ -15,8 +15,19 @@
 #
 # No external deps beyond bash, awk, grep, sed, and `go`. No yq/jq needed —
 # the YAML schema is a flat map so a tiny grep+awk parser handles it.
+#
+# Requires Bash 4+ (associative arrays, `[[ -v ... ]]`). On macOS the system
+# /bin/bash is 3.2; install Bash 4+ via `brew install bash` and run with
+# `bash .github/scripts/check-coverage.sh ...` (the env-bash shebang will
+# pick up the Homebrew bash if it's earlier on PATH).
 
 set -euo pipefail
+
+if [[ "${BASH_VERSINFO[0]:-0}" -lt 4 ]]; then
+    echo "error: this script requires Bash 4+; got ${BASH_VERSION:-unknown}" >&2
+    echo "  on macOS: brew install bash, then re-run with the Homebrew bash" >&2
+    exit 2
+fi
 
 if [[ $# -ne 1 ]]; then
     echo "usage: $0 <coverage-profile>" >&2

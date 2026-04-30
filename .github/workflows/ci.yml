@@ -58,6 +58,9 @@ jobs:
           fi
 
       - name: Upload coverage profile
+        # `if: always()` so the artefact is preserved even when the gate
+        # fails, making post-mortem debugging of failing runs possible.
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: coverage-${{ github.event_name }}-${{ github.sha }}
@@ -69,7 +72,12 @@ jobs:
         # per-package coverage against the most recent main-branch run; if
         # no main run is available (first-ever run, expired artefact),
         # falls back to a current-only summary.
-        if: github.event_name == 'pull_request'
+        #
+        # `if: always()` is deliberate — when the gate fails is exactly
+        # when "what did I drop?" matters most. Without `always()` this
+        # step would skip on gate failure, leaving the user with no
+        # delta visibility precisely in the case where they need it.
+        if: always() && github.event_name == 'pull_request'
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}

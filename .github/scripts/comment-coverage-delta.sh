@@ -87,7 +87,10 @@ fetch_main_profile() {
         --jq '.[0].databaseId' 2>/dev/null || true)"
 
     if [[ -z "$run_id" || "$run_id" == "null" ]]; then
-        echo "::warning::no successful main-branch CI run found for delta"
+        # Warnings go to stderr so command substitution captures only the
+        # found path (or empty) on stdout. Otherwise the caller's
+        # `main_profile="$(fetch_main_profile)"` would contain warning text.
+        echo "::warning::no successful main-branch CI run found for delta" >&2
         return
     fi
 
@@ -98,7 +101,7 @@ fetch_main_profile() {
         --repo "$repo" \
         --dir "$workdir" \
         --pattern 'coverage-push-*' >/dev/null 2>&1; then
-        echo "::warning::failed to download main coverage artefact for run $run_id"
+        echo "::warning::failed to download main coverage artefact for run $run_id" >&2
         return
     fi
 
@@ -168,8 +171,13 @@ main_profile="$(fetch_main_profile)"
 marker='<!-- bridge-coverage-delta-comment -->'
 echo "$marker" >> /tmp/coverage-comment.md
 
+# Paginate the comments lookup. Default page size is 30; PRs that go through
+# multiple Copilot review rounds easily exceed that, and a missed marker on
+# page 2+ would cause this script to spam a fresh comment per push instead
+# of updating the existing one.
 existing_comment_id="$(gh api \
-    "repos/${repo}/issues/${PR_NUMBER}/comments" \
+    --paginate \
+    "repos/${repo}/issues/${PR_NUMBER}/comments?per_page=100" \
     --jq ".[] | select(.body | contains(\"$marker\")) | .id" 2>/dev/null \
     | head -1 || true)"
 
