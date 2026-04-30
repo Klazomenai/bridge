@@ -18,6 +18,25 @@
 
 set -uo pipefail
 
+if [[ "${BASH_VERSINFO[0]:-0}" -lt 4 ]]; then
+    echo "::warning::comment-coverage-delta.sh requires Bash 4+; got ${BASH_VERSION:-unknown}; skipping" >&2
+    echo "  on macOS: brew install bash, then re-run with the Homebrew bash" >&2
+    exit 0
+fi
+
+# Workdir at script scope — `fetch_main_profile` mkdirs into this and we
+# clean up once on EXIT. Avoids accumulating /tmp/tmp.XXXXXX directories
+# across local runs. CI runners are ephemeral, but the trap costs nothing
+# there either.
+WORKDIR=""
+cleanup() {
+    if [[ -n "$WORKDIR" && -d "$WORKDIR" ]]; then
+        rm -rf "$WORKDIR"
+    fi
+    rm -f /tmp/coverage-comment.md
+}
+trap cleanup EXIT
+
 if [[ $# -ne 1 ]]; then
     echo "::warning::usage: $0 <pr-coverage-profile>" >&2
     exit 0
@@ -70,10 +89,10 @@ per_package() {
 }
 
 # Try to download the most recent main-branch coverage artefact. Returns
-# the path to coverage.out on success, empty string otherwise.
+# the path to coverage.out on success, empty string otherwise. Uses the
+# script-scope WORKDIR which is cleaned up by the EXIT trap.
 fetch_main_profile() {
-    local workdir
-    workdir="$(mktemp -d)"
+    WORKDIR="$(mktemp -d)"
 
     # Find the most recent successful CI run on main.
     local run_id
@@ -99,7 +118,7 @@ fetch_main_profile() {
     # `coverage-push-` from that run; there's only one per run.
     if ! gh run download "$run_id" \
         --repo "$repo" \
-        --dir "$workdir" \
+        --dir "$WORKDIR" \
         --pattern 'coverage-push-*' >/dev/null 2>&1; then
         echo "::warning::failed to download main coverage artefact for run $run_id" >&2
         return
@@ -107,7 +126,7 @@ fetch_main_profile() {
 
     # Find the downloaded coverage.out (first match wins).
     local found
-    found="$(find "$workdir" -name 'coverage.out' -type f | head -1)"
+    found="$(find "$WORKDIR" -name 'coverage.out' -type f | head -1)"
     if [[ -n "$found" ]]; then
         echo "$found"
     fi

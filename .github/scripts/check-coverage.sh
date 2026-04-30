@@ -126,7 +126,9 @@ unknown_packages=()
 covered_packages=()
 
 # Walk every package that actually has coverage data; check against threshold.
-for pkg in "${!actual[@]}"; do
+# Iteration order is sorted (not associative-array native order) so the CI
+# log is deterministic and diff-friendly across runs.
+while IFS= read -r pkg; do
     cov="${actual[$pkg]}"
     if [[ -v threshold[$pkg] ]]; then
         t="${threshold[$pkg]}"
@@ -142,15 +144,16 @@ for pkg in "${!actual[@]}"; do
     else
         unknown_packages+=("$pkg ($cov%)")
     fi
-done
+done < <(printf '%s\n' "${!actual[@]}" | sort)
 
 # Walk every package in the YAML that DIDN'T appear in coverage data — likely
 # a renamed or removed package; surface it so the YAML stays accurate.
-for pkg in "${!threshold[@]}"; do
+# Sorted iteration for the same diff-friendly reasoning.
+while IFS= read -r pkg; do
     if [[ ! -v actual[$pkg] ]]; then
         printf 'SKIP  %-30s (no coverage data — package missing or excluded?)\n' "$pkg"
     fi
-done
+done < <(printf '%s\n' "${!threshold[@]}" | sort)
 
 if [[ ${#unknown_packages[@]} -gt 0 ]]; then
     echo
