@@ -31,15 +31,58 @@ jobs:
             -covermode=atomic \
             ./internal/...
 
-      - name: Coverage check
+      - name: Coverage check (per-package thresholds)
+        id: coverage_check
+        # The override marker `[allow-coverage-drop]` in a PR body bypasses
+        # the gate but still surfaces the result for visibility. Useful for
+        # deliberate refactors that remove dead code (and thus coverage).
+        #
+        # `set -o pipefail` is explicit (GitHub Actions enables it by default
+        # in the runner shell, but `set +e` doesn't disable pipefail and we
+        # want the contract to survive any future runner config drift).
+        # Without it, `rc=$?` would capture `tee`'s exit code (always 0) and
+        # silently mask gate failures.
         run: |
-          COVERAGE=$(go tool cover -func=coverage.out \
-            | grep '^total:' \
-            | awk '{print $3}' \
-            | tr -d '%')
-          echo "Total coverage: ${COVERAGE}%"
-          # Fail if below 70%.
-          awk -v c="$COVERAGE" 'BEGIN { if (c+0 < 70) { print "Coverage " c "% < 70% minimum"; exit 1 } }'
+          set +e
+          set -o pipefail
+          .github/scripts/check-coverage.sh coverage.out | tee coverage-report.txt
+          rc=$?
+          set +o pipefail
+          if [[ "$rc" -ne 0 ]]; then
+            if [[ "${{ github.event_name }}" == "pull_request" ]] \
+                && grep -qF '[allow-coverage-drop]' <<< "${{ github.event.pull_request.body }}"; then
+              echo "::warning::coverage gate would have failed (rc=$rc) but [allow-coverage-drop] override is set"
+              exit 0
+            fi
+            exit "$rc"
+          fi
+
+      - name: Upload coverage profile
+        # `if: always()` so the artefact is preserved even when the gate
+        # fails, making post-mortem debugging of failing runs possible.
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ github.event_name }}-${{ github.sha }}
+          path: coverage.out
+          retention-days: 30
+
+      - name: Post coverage delta comment
+        # Best-effort, not gating. Only runs on PRs. Compares the PR's
+        # per-package coverage against the most recent main-branch run; if
+        # no main run is available (first-ever run, expired artefact),
+        # falls back to a current-only summary.
+        #
+        # `if: always()` is deliberate — when the gate fails is exactly
+        # when "what did I drop?" matters most. Without `always()` this
+        # step would skip on gate failure, leaving the user with no
+        # delta visibility precisely in the case where they need it.
+        if: always() && github.event_name == 'pull_request'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: .github/scripts/comment-coverage-delta.sh coverage.out
 
   docker:
     runs-on: ubuntu-latest
