@@ -84,6 +84,35 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: .github/scripts/comment-coverage-delta.sh coverage.out
 
+  license-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install go-licenses
+        run: go install github.com/google/go-licenses@latest
+
+      - name: License audit (AGPL-compatible deps only)
+        # Bridge is AGPL-3.0-or-later. This step verifies no transitive
+        # dependency is "forbidden" by go-licenses' classification —
+        # i.e. proprietary, commercial-only, or otherwise incompatible
+        # with copyleft. Restricted licences (GPL/AGPL/LGPL) are allowed
+        # because Bridge itself is AGPL.
+        #
+        # If a future PR introduces a forbidden dep this step fails and
+        # blocks the merge. Update the project's licensing posture or
+        # swap the dep before relaxing this check.
+        run: |
+          go-licenses check ./... \
+            --disallowed_types=forbidden \
+            --ignore=$(go list -m | head -1)
+
   docker:
     runs-on: ubuntu-latest
     needs: test

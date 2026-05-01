@@ -29,8 +29,9 @@ modified Bridge as a service must offer source to their users. That
 matters here because Bridge *is* a service, and we want the share-alike
 spirit to follow the code wherever it sails.
 
-Klazomenai retains all rights and may relicense Bridge under any
-**OSI-approved open-source license** in future via the
-[Contributor License Agreement](CONTRIBUTING.md) — but never under
-proprietary or source-available terms. See [STEWARDSHIP.md](STEWARDSHIP.md)
+Klazomenai may relicense Bridge under any **OSI-approved open-source
+license** in future, exercising the sublicensing rights granted by
+contributors via the [Contributor License Agreement](CONTRIBUTING.md) —
+but never under proprietary or source-available terms. Contributors
+retain copyright in their contributions. See [STEWARDSHIP.md](STEWARDSHIP.md)
 for the public commitments behind that.

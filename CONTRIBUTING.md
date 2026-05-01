@@ -40,7 +40,8 @@ Aye, here's how we move the work from quayside to mast:
 3. **Commit in conventional form.**
    [Conventional Commits](https://www.conventionalcommits.org/) — subject
    lines `<type>(scope): <description>`. Optional emoji at the **end** of
-   the subject (commitlint can't parse a leading emoji).
+   the subject (Conventional Commits parsers handle trailing emoji more
+   reliably than leading ones).
 4. **Sign your commits** (`git commit --gpg-sign` / `-S`). Branch
    protection requires it.
 5. **Open a draft PR** the moment you have a working branch. PRs targeting
