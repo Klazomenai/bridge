@@ -83,7 +83,9 @@ Where the rigging is dressed, every line in its place:
   🚧 WIP · 📋 Planned.
 - **Maritime preference**: ⛵ over 🚀 · 🏴‍☠️ for milestones · ⚓ for stable.
 - **Newlines at EOF**, no trailing whitespace, LF line endings.
-- **No emojis in branch names, code, or comments.**
+- **No emojis in source code, code comments, or branch names** — emojis
+  belong in human prose (issue bodies, PR descriptions, commit messages),
+  not in machine-readable identifiers or compiled artefacts.
 
 ## Labels
 
