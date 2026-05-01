@@ -14,7 +14,7 @@ It runs as a Matrix bot, routes messages to AI crew members, and manages session
 - **Crew**: AI personas backed by Claude (Anthropic SDK)
 - **Crest**: IMAP/SMTP service for email bootstrap
 
-## License
+## Licence
 
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 
@@ -24,14 +24,14 @@ Licensed under the [GNU Affero General Public License, version 3 or later](LICEN
 
 Bridge runs as a network service — a Matrix bot orchestrating AI crew on
 behalf of users. AGPL's network clause (Section 13) closes the "SaaS
-loophole" that weaker copyleft licenses leave open: anyone running a
+loophole" that weaker copyleft licences leave open: anyone running a
 modified Bridge as a service must offer source to their users. That
 matters here because Bridge *is* a service, and we want the share-alike
 spirit to follow the code wherever it sails.
 
 Klazomenai may relicense Bridge under any **OSI-approved open-source
-license** in future, exercising the sublicensing rights granted by
-contributors via the [Contributor License Agreement](https://gist.github.com/Klazomenai/b541b6605a823e234e3343a7145035de) —
+licence** in future, exercising the sublicensing rights granted by
+contributors via the [Contributor Licence Agreement](https://gist.github.com/Klazomenai/b541b6605a823e234e3343a7145035de) —
 but never under proprietary or source-available terms. Contributors
 retain copyright in their contributions. See [CONTRIBUTING.md](CONTRIBUTING.md)
 for the contribution workflow and [STEWARDSHIP.md](STEWARDSHIP.md) for

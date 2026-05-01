@@ -1,4 +1,4 @@
-# Contributing to bridge
+# Contributing to Bridge
 
 Welcome aboard, ship's company. Bridge is the AI crew orchestrator at
 the heart of the Offshore Fleet — the Matrix bot that routes a captain's
