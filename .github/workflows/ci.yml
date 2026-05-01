@@ -96,7 +96,10 @@ jobs:
           cache: true
 
       - name: Install go-licenses
-        run: go install github.com/google/go-licenses@latest
+        # Pinned to a specific tag rather than @latest so the audit gate's
+        # behaviour stays stable across CI runs. Bump intentionally when
+        # we want to adopt newer go-licenses behaviour or fixes.
+        run: go install github.com/google/go-licenses@v1.6.0
 
       - name: License audit (AGPL-compatible deps only)
         # Bridge is AGPL-3.0-or-later. This step verifies no transitive
