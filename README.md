@@ -16,4 +16,21 @@ It runs as a Matrix bot, routes messages to AI crew members, and manages session
 
 ## License
 
-Apache-2.0
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
+
+Licensed under the [GNU Affero General Public License, version 3 or later](LICENSE.md) (AGPL-3.0-or-later).
+
+### Why AGPL?
+
+Bridge runs as a network service — a Matrix bot orchestrating AI crew on
+behalf of users. AGPL's network clause (Section 13) closes the "SaaS
+loophole" that weaker copyleft licenses leave open: anyone running a
+modified Bridge as a service must offer source to their users. That
+matters here because Bridge *is* a service, and we want the share-alike
+spirit to follow the code wherever it sails.
+
+Klazomenai retains all rights and may relicense Bridge under any
+**OSI-approved open-source license** in future via the
+[Contributor License Agreement](CONTRIBUTING.md) — but never under
+proprietary or source-available terms. See [STEWARDSHIP.md](STEWARDSHIP.md)
+for the public commitments behind that.
