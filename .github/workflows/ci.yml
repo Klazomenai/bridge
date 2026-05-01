@@ -102,19 +102,34 @@ jobs:
         run: go install github.com/google/go-licenses@v1.6.0
 
       - name: License audit (AGPL-compatible deps only)
-        # Bridge is AGPL-3.0-or-later. This step verifies no transitive
-        # dependency is "forbidden" by go-licenses' classification —
-        # i.e. proprietary, commercial-only, or otherwise incompatible
-        # with copyleft. Restricted licences (GPL/AGPL/LGPL) are allowed
-        # because Bridge itself is AGPL.
+        # Bridge is AGPL-3.0-or-later. Two-stage gate:
         #
-        # If a future PR introduces a forbidden dep this step fails and
-        # blocks the merge. Update the project's licensing posture or
-        # swap the dep before relaxing this check.
+        # 1. `go-licenses check --disallowed_types=forbidden` blocks
+        #    proprietary / commercial-only deps.
+        #
+        # 2. Explicit grep for `GPL-2.0-only` in the report output —
+        #    go-licenses classifies GPL-2.0-only as `restricted` (which
+        #    we otherwise allow because Bridge is AGPL), but
+        #    GPL-2.0-only has no "or-later" upgrade path and is
+        #    therefore genuinely incompatible with AGPL-3.0. Catch it
+        #    explicitly until / unless go-licenses gains a finer
+        #    classification.
+        #
+        # Restricted licences with upgrade paths (GPL-3.0+, LGPL-3.0+,
+        # AGPL-3.0+) remain allowed because Bridge itself is AGPL.
         run: |
+          set -o pipefail
           go-licenses check ./... \
             --disallowed_types=forbidden \
             --ignore=$(go list -m | head -1)
+
+          go-licenses report ./... 2>/dev/null > licenses.csv
+          if awk -F',' '$3 == "GPL-2.0-only"' licenses.csv | grep -q .; then
+            echo "::error::GPL-2.0-only dependency detected (incompatible with AGPL-3.0)"
+            awk -F',' '$3 == "GPL-2.0-only"' licenses.csv
+            exit 1
+          fi
+          echo "License audit: $(wc -l < licenses.csv) deps, no incompatible licences"
 
   docker:
     runs-on: ubuntu-latest

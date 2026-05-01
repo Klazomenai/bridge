@@ -31,7 +31,8 @@ spirit to follow the code wherever it sails.
 
 Klazomenai may relicense Bridge under any **OSI-approved open-source
 license** in future, exercising the sublicensing rights granted by
-contributors via the [Contributor License Agreement](CONTRIBUTING.md) —
+contributors via the [Contributor License Agreement](https://gist.github.com/Klazomenai/b541b6605a823e234e3343a7145035de) —
 but never under proprietary or source-available terms. Contributors
-retain copyright in their contributions. See [STEWARDSHIP.md](STEWARDSHIP.md)
-for the public commitments behind that.
+retain copyright in their contributions. See [CONTRIBUTING.md](CONTRIBUTING.md)
+for the contribution workflow and [STEWARDSHIP.md](STEWARDSHIP.md) for
+the public commitments behind the licence stance.

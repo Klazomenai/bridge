@@ -10,17 +10,18 @@ once, sail with us.
 
 Three things we ask of every hand who comes aboard:
 
-1. **Sign the CLA.** Every contributor signs the Contributor Licence
-   Agreement once — the bot leaves a comment with the link on your first
-   PR. Your copyright stays your own. You grant Klazomenai a perpetual
-   sublicensable licence so future relicensing decisions can be made
-   cleanly — but **bounded to OSI-approved open-source licences only**.
-   The CLA does *not* grant Klazomenai the right to take your contribution
-   proprietary or source-available. If that boundary ever needs to move,
-   contributors are asked again. Bridge currently sails under the
-   [LICENSE.md](LICENSE.md) at the root of the repo (AGPL-3.0-or-later),
-   and our commitments to contributors are set down in
-   [STEWARDSHIP.md](STEWARDSHIP.md).
+1. **Sign the CLA.** Read the
+   [Contributor Licence Agreement](https://gist.github.com/Klazomenai/b541b6605a823e234e3343a7145035de)
+   first — every contributor signs it once, and the bot leaves a comment
+   with the signing link on your first PR. Your copyright stays your own.
+   You grant Klazomenai a perpetual sublicensable licence so future
+   relicensing decisions can be made cleanly — but **bounded to
+   OSI-approved open-source licences only**. The CLA does *not* grant
+   Klazomenai the right to take your contribution proprietary or
+   source-available. If that boundary ever needs to move, contributors
+   are asked again. Bridge currently sails under the [LICENSE.md](LICENSE.md)
+   at the root of the repo (AGPL-3.0-or-later), and our commitments to
+   contributors are set down in [STEWARDSHIP.md](STEWARDSHIP.md).
 2. **Be kind in issues and reviews.** Disagreement is fine. Disagreement
    without respect is not. The watch is small and the world is large.
 3. **Talk before you build.** Open an issue for anything bigger than a
@@ -58,10 +59,15 @@ Bridge is Go 1.25, pure-Go olm via `-tags goolm`, no CGO. See the
 [docs/](docs/) directory for setup, configuration, and runbooks.
 
 ```bash
-go test ./...                  # unit tests
-go vet ./...                   # static checks
-go build ./cmd/bridge          # build the binary
+CGO_ENABLED=0 go test -tags goolm ./internal/...    # unit tests (matches CI)
+CGO_ENABLED=0 go vet -tags goolm ./...              # static checks
+CGO_ENABLED=0 go build -tags goolm ./cmd/bridge     # build the binary
 ```
+
+The `-tags goolm` build tag selects the pure-Go olm implementation;
+`CGO_ENABLED=0` keeps the binary statically-linked. Both match the CI
+contract — running locally without these will pull in libolm/CGO and
+diverge from the supported build path.
 
 CI will run the full test suite plus license-audit checks on every PR.
 
