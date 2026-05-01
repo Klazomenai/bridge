@@ -117,13 +117,34 @@ jobs:
         #
         # Restricted licences with upgrade paths (GPL-3.0+, LGPL-3.0+,
         # AGPL-3.0+) remain allowed because Bridge itself is AGPL.
+        #
+        # CGO_ENABLED=0 + -tags=goolm match Bridge's shipped build
+        # path. Without them the audit sees CGO-only deps (e.g.
+        # go-sqlite3) that aren't in the artifact, and misses deps
+        # pulled in under the goolm tag.
+        env:
+          CGO_ENABLED: '0'
+          GOFLAGS: '-tags=goolm'
         run: |
           set -o pipefail
+
           go-licenses check ./... \
             --disallowed_types=forbidden \
             --ignore=$(go list -m | head -1)
 
-          go-licenses report ./... 2>/dev/null > licenses.csv
+          # Capture stderr so go-licenses diagnostics surface in CI
+          # logs whether the step passes or fails. Silencing stderr
+          # makes failures un-debuggable.
+          if ! go-licenses report ./... 2>licenses-stderr.log > licenses.csv; then
+            echo "::error::go-licenses report failed; diagnostics:"
+            cat licenses-stderr.log
+            exit 1
+          fi
+          if [ -s licenses-stderr.log ]; then
+            echo "go-licenses diagnostics:"
+            cat licenses-stderr.log
+          fi
+
           if awk -F',' '$3 == "GPL-2.0-only"' licenses.csv | grep -q .; then
             echo "::error::GPL-2.0-only dependency detected (incompatible with AGPL-3.0)"
             awk -F',' '$3 == "GPL-2.0-only"' licenses.csv
