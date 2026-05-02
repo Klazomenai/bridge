@@ -71,6 +71,24 @@ diverge from the supported build path.
 
 CI will run the full test suite plus license-audit checks on every PR.
 
+### Re-syncing the Chips skill body
+
+Chips' system prompt is augmented at build time with a curated subset of the
+operator's `github` skill, vendored at `internal/crew/skills/github.md` and
+embedded via `go:embed`. To re-sync from a local dotfiles checkout:
+
+```bash
+cp ../dotfiles/claude/skills/github/SKILL.md internal/crew/skills/github.md
+# then hand-curate: strip the public-repo-sanitisation section, drop frontmatter,
+# leave the workflow rules. Diff before committing.
+```
+
+The sync is intentionally manual: the upstream skill targets human operators
+running Claude Code, and the embedded copy targets an autonomous orchestrator —
+sections need triage rather than blind copy. The
+`TestChipsSystemPromptContainsGitHubSkill` golden test catches accidental
+truncation.
+
 ## The Quartermaster's Conventions
 
 Where the rigging is dressed, every line in its place:

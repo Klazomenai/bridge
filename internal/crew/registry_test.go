@@ -632,3 +632,85 @@ func TestRealCrewYAMLLoadsAndValidates(t *testing.T) {
 		t.Fatalf("real crew.yaml tool validation failed: %v", err)
 	}
 }
+
+// TestChipsSystemPromptContainsGitHubSkill verifies that the embedded github
+// skill body is appended to Chips' system prompt and that key rules survive
+// the build pipeline. Loads the real config/crew.yaml so a divergence between
+// the YAML prompt and the embedded skill is caught.
+func TestChipsSystemPromptContainsGitHubSkill(t *testing.T) {
+	const configPath = "../../config/crew.yaml"
+	if _, err := os.Stat(configPath); err != nil {
+		t.Skipf("config/crew.yaml not found at %s (running outside repo?)", configPath)
+	}
+
+	r, err := crew.Load(configPath)
+	if err != nil {
+		t.Fatalf("Load real crew.yaml: %v", err)
+	}
+
+	chips := r.Get("chips")
+	if chips == nil {
+		t.Fatal("chips not found in real crew.yaml")
+	}
+
+	prompt := chips.SystemPrompt()
+
+	// Persona prompt itself must still be there (gate did not replace it).
+	if !strings.Contains(prompt, "Carpenter") {
+		t.Error("chips persona prompt missing — embedding overwrote rather than appended")
+	}
+
+	// Key skill rules that must survive build-time embedding. Each entry
+	// is a load-bearing rule; failure means the skill body was truncated,
+	// the gating logic dropped chips, or the source skill drifted away
+	// from the operator's standing instructions.
+	requiredRules := []struct {
+		name    string
+		fragment string
+	}{
+		{"signed commits", "--gpg-sign"},
+		{"refs not closes", "Refs #N"},
+		{"closes forbidden", "NEVER `Closes #N`"},
+		{"draft default", "ALWAYS create PRs as draft"},
+		{"never push main", "NEVER push to `main`"},
+		{"never amend", "NEVER amend commits"},
+		{"no auto-merge", "NEVER run `gh pr merge`"},
+		{"conventional commits", "Conventional commits format"},
+		{"end-of-title emoji", "Emojis go at the END"},
+		{"copilot review workflow", "Copilot Review Workflow"},
+	}
+	for _, r := range requiredRules {
+		if !strings.Contains(prompt, r.fragment) {
+			t.Errorf("chips prompt missing %s rule: fragment %q not found", r.name, r.fragment)
+		}
+	}
+}
+
+// TestNonChipsCrewLackGitHubSkill verifies the embedding is gated to chips —
+// Maren / Crest / Bosun / Lookout must not inherit GitHub workflow rules
+// they have no tools to act on.
+func TestNonChipsCrewLackGitHubSkill(t *testing.T) {
+	const configPath = "../../config/crew.yaml"
+	if _, err := os.Stat(configPath); err != nil {
+		t.Skipf("config/crew.yaml not found at %s (running outside repo?)", configPath)
+	}
+
+	r, err := crew.Load(configPath)
+	if err != nil {
+		t.Fatalf("Load real crew.yaml: %v", err)
+	}
+
+	// Sentinel fragment unique to the embedded skill body.
+	const sentinel = "Copilot Review Workflow"
+
+	for _, id := range []string{"maren", "crest", "bosun", "lookout"} {
+		c := r.Get(id)
+		if c == nil {
+			t.Errorf("%s not found", id)
+			continue
+		}
+		if strings.Contains(c.SystemPrompt(), sentinel) {
+			t.Errorf("%s system prompt unexpectedly contains GitHub skill — gating broken", id)
+		}
+	}
+}

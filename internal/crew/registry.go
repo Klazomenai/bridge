@@ -1,6 +1,7 @@
 package crew
 
 import (
+	_ "embed"
 	"fmt"
 	"os"
 	"sort"
@@ -8,6 +9,14 @@ import (
 
 	"gopkg.in/yaml.v3"
 )
+
+// chipsGitHubSkill is the curated github skill body, vendored from the operator's
+// dotfiles. Appended to Chips' system prompt at registry-load time so the persona
+// inherits the operator's standing rules on commits, branches, PRs, and review
+// threads. Re-sync via the command in CONTRIBUTING.md.
+//
+//go:embed skills/github.md
+var chipsGitHubSkill string
 
 // verbosityDescriptions maps verbosity mode names to their injected instruction text.
 var verbosityDescriptions = map[string]string{
@@ -81,6 +90,9 @@ func Load(path string) (*Registry, error) {
 			return nil, fmt.Errorf("crew %s: unknown verbosity %q", id, entry.Verbosity)
 		}
 		prompt := strings.ReplaceAll(entry.SystemPrompt, "{verbosity}", verbDesc)
+		if id == "chips" {
+			prompt = prompt + "\n" + chipsGitHubSkill
+		}
 		registry.crew[id] = &BaseCrew{
 			id:           id,
 			name:         entry.Name,
