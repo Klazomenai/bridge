@@ -10,6 +10,14 @@ permissions:
   pull-requests: write
   packages: write
 
+# Opt into Node 24 ahead of GitHub's forced migration on 2026-06-02 (Node
+# 20 actions removed entirely 2026-09-16). Affected here:
+# googleapis/release-please-action, actions/checkout, docker/setup-buildx-action,
+# docker/login-action, docker/build-push-action. Drop this env once those bump
+# to Node-24-native versions and we update them deliberately.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 jobs:
   release-please:
     name: Release Please
