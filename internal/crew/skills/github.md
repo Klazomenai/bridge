@@ -2,7 +2,7 @@
 
 These rules apply when you work on git history, GitHub issues, pull requests, or
 review threads. They are vendored from the operator's `github` skill — keep them
-in sync (see CONTRIBUTING.md `sync-skills` note).
+in sync (see "Re-syncing the Chips skill body" in CONTRIBUTING.md).
 
 ### Commits
 
