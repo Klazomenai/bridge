@@ -679,9 +679,9 @@ func TestChipsSystemPromptContainsGitHubSkill(t *testing.T) {
 		{"end-of-title emoji", "Emojis go at the END"},
 		{"copilot review workflow", "Copilot Review Workflow"},
 	}
-	for _, r := range requiredRules {
-		if !strings.Contains(prompt, r.fragment) {
-			t.Errorf("chips prompt missing %s rule: fragment %q not found", r.name, r.fragment)
+	for _, rule := range requiredRules {
+		if !strings.Contains(prompt, rule.fragment) {
+			t.Errorf("chips prompt missing %s rule: fragment %q not found", rule.name, rule.fragment)
 		}
 	}
 }
