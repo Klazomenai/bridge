@@ -37,7 +37,7 @@ Aye, here's how we move the work from quayside to mast:
    Keeps everyone aligned on motivation, scope, and acceptance.
 2. **Branch off the trunk.** Name the branch
    `<type>/<issue-number>-<short-description>`. Types: `feat`, `fix`,
-   `chore`, `refactor`, `docs`, `ci`, `security`, `test`.
+   `chore`, `refactor`, `docs`, `ci`, `security`, `test`, `spike`.
 3. **Commit in conventional form.**
    [Conventional Commits](https://www.conventionalcommits.org/) — subject
    lines `<type>(scope): <description>`. Optional emoji at the **end** of
@@ -70,6 +70,24 @@ contract — running locally without these will pull in libolm/CGO and
 diverge from the supported build path.
 
 CI will run the full test suite plus license-audit checks on every PR.
+
+### Re-syncing the Chips skill body
+
+Chips' system prompt is augmented at build time with a curated subset of the
+operator's `github` skill, vendored at `internal/crew/skills/github.md` and
+embedded via `go:embed`. To re-sync from a local dotfiles checkout:
+
+```bash
+cp ../dotfiles/claude/skills/github/SKILL.md internal/crew/skills/github.md
+# then hand-curate: strip the public-repo-sanitisation section, drop frontmatter,
+# leave the workflow rules. Diff before committing.
+```
+
+The sync is intentionally manual: the upstream skill targets human operators
+running Claude Code, and the embedded copy targets an autonomous orchestrator —
+sections need triage rather than blind copy. The
+`TestChipsSystemPromptContainsGitHubSkill` golden test catches accidental
+truncation.
 
 ## The Quartermaster's Conventions
 

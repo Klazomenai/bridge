@@ -1,6 +1,7 @@
 package crew
 
 import (
+	_ "embed"
 	"fmt"
 	"os"
 	"sort"
@@ -8,6 +9,14 @@ import (
 
 	"gopkg.in/yaml.v3"
 )
+
+// chipsGitHubSkill is the curated github skill body, vendored from the operator's
+// dotfiles. Appended to Chips' system prompt at registry-load time so the persona
+// inherits the operator's standing rules on commits, branches, PRs, and review
+// threads. Re-sync via the command in CONTRIBUTING.md.
+//
+//go:embed skills/github.md
+var chipsGitHubSkill string
 
 // verbosityDescriptions maps verbosity mode names to their injected instruction text.
 var verbosityDescriptions = map[string]string{
@@ -81,6 +90,13 @@ func Load(path string) (*Registry, error) {
 			return nil, fmt.Errorf("crew %s: unknown verbosity %q", id, entry.Verbosity)
 		}
 		prompt := strings.ReplaceAll(entry.SystemPrompt, "{verbosity}", verbDesc)
+		if id == "chips" {
+			// TrimRight bounds the separator on the prompt side: YAML `|`
+			// literal block scalars produce a trailing newline today, but
+			// `|-` would strip it. Normalising to exactly one blank line
+			// keeps the boundary stable regardless of YAML chomp style.
+			prompt = strings.TrimRight(prompt, "\n") + "\n\n" + chipsGitHubSkill
+		}
 		registry.crew[id] = &BaseCrew{
 			id:           id,
 			name:         entry.Name,
