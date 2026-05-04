@@ -37,7 +37,7 @@ Aye, here's how we move the work from quayside to mast:
    Keeps everyone aligned on motivation, scope, and acceptance.
 2. **Branch off the trunk.** Name the branch
    `<type>/<issue-number>-<short-description>`. Types: `feat`, `fix`,
-   `chore`, `refactor`, `docs`, `ci`, `security`, `test`.
+   `chore`, `refactor`, `docs`, `ci`, `security`, `test`, `spike`.
 3. **Commit in conventional form.**
    [Conventional Commits](https://www.conventionalcommits.org/) — subject
    lines `<type>(scope): <description>`. Optional emoji at the **end** of
