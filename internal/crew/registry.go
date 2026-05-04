@@ -91,7 +91,11 @@ func Load(path string) (*Registry, error) {
 		}
 		prompt := strings.ReplaceAll(entry.SystemPrompt, "{verbosity}", verbDesc)
 		if id == "chips" {
-			prompt = prompt + "\n" + chipsGitHubSkill
+			// TrimRight bounds the separator on the prompt side: YAML `|`
+			// literal block scalars produce a trailing newline today, but
+			// `|-` would strip it. Normalising to exactly one blank line
+			// keeps the boundary stable regardless of YAML chomp style.
+			prompt = strings.TrimRight(prompt, "\n") + "\n\n" + chipsGitHubSkill
 		}
 		registry.crew[id] = &BaseCrew{
 			id:           id,

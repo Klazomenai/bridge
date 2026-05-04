@@ -684,6 +684,15 @@ func TestChipsSystemPromptContainsGitHubSkill(t *testing.T) {
 			t.Errorf("chips prompt missing %s rule: fragment %q not found", rule.name, rule.fragment)
 		}
 	}
+
+	// Pin the persona ↔ skill boundary so a future edit to crew.yaml's
+	// scalar style (e.g. `|` → `|-`, which strips the trailing newline)
+	// or a skill-file rewrite that drops the leading header is caught
+	// at CI rather than only by visual inspection of the rendered prompt.
+	const boundary = "\n\n## Git + GitHub Workflow Rules"
+	if !strings.Contains(prompt, boundary) {
+		t.Errorf("chips prompt missing persona↔skill boundary %q — separator may have collapsed", boundary)
+	}
 }
 
 // TestNonChipsCrewLackGitHubSkill verifies the embedding is gated to chips —
