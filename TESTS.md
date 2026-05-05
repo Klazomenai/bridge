@@ -12,8 +12,11 @@ This file is the operator-facing reference for *what runs where*.
 ## Prerequisites
 
 All Bridge Go tests run under the project's standard build flags. The
-toolchain version is pinned in `go.mod` (currently **Go 1.25**) — running
-the suite with an older Go release will fail at module resolution.
+toolchain version is pinned in `go.mod` (currently **Go 1.25**) — the
+`go` directive's version check blocks any older toolchain at command
+start (e.g. `go.mod requires go >= 1.25.0`). With `GOTOOLCHAIN=auto`
+(the default since Go 1.21) the right toolchain is auto-downloaded;
+otherwise the tool exits before reaching the test code.
 
 ```sh
 CGO_ENABLED=0 go vet -tags goolm ./...
