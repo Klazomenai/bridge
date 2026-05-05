@@ -664,6 +664,14 @@ func TestChipsSystemPromptContainsGitHubSkill(t *testing.T) {
 	// is a load-bearing rule; failure means the skill body was truncated,
 	// the gating logic dropped chips, or the source skill drifted away
 	// from the operator's standing instructions.
+	//
+	// TODO(#148): migrate to compose_test.go after Source/Compose lands.
+	// Once the skills loader rewrite is in, this assertion table moves
+	// into the new compose_test.go alongside the universal+profile
+	// composition tests. The fragments here describe the OLD vendored
+	// monolithic skill body (post-PR144); the new layout will assert
+	// against the universal+skill+profile concatenation. Keep the
+	// fragments as a regression net during the migration.
 	requiredRules := []struct {
 		name    string
 		fragment string
@@ -689,6 +697,14 @@ func TestChipsSystemPromptContainsGitHubSkill(t *testing.T) {
 	// scalar style (e.g. `|` → `|-`, which strips the trailing newline)
 	// or a skill-file rewrite that drops the leading header is caught
 	// at CI rather than only by visual inspection of the rendered prompt.
+	//
+	// TODO(#148): migrate to compose_test.go after Source/Compose lands.
+	// Under the new loader the boundary marker still applies — Compose
+	// emits `\n\n## <Skill> Workflow Rules\n` as the persona↔skill
+	// separator. The literal in this assertion will need updating to
+	// match Compose's emitted heading; the assertion intent (boundary
+	// is stable across YAML chomp style + skill-file edits) carries
+	// forward unchanged.
 	const boundary = "\n\n## Git + GitHub Workflow Rules"
 	if !strings.Contains(prompt, boundary) {
 		t.Errorf("chips prompt missing persona↔skill boundary %q — separator may have collapsed", boundary)
