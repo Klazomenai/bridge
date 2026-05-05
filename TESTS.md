@@ -11,7 +11,9 @@ This file is the operator-facing reference for *what runs where*.
 
 ## Prerequisites
 
-All Bridge Go tests run under the project's standard build flags:
+All Bridge Go tests run under the project's standard build flags. The
+toolchain version is pinned in `go.mod` (currently **Go 1.25**) — running
+the suite with an older Go release will fail at module resolution.
 
 ```sh
 CGO_ENABLED=0 go vet -tags goolm ./...
@@ -73,8 +75,9 @@ recent message, `gh pr merge` / `gh pr ready` aren't even registered
 as callable, audit trails redact tokens. L2 proves these claims fire.
 
 Planned files: `internal/crew/skills/compose_test.go`,
-`internal/crew/skills/source_test.go`, plus extensions to
-`internal/crew/registry_test.go` and
+`internal/crew/skills/loader_test.go` (matching the `loader.go` source
+file that hosts the `Source` interface + three implementations), plus
+extensions to `internal/crew/registry_test.go` and
 `internal/orchestrator/orchestrator_test.go`.
 
 | Planned test | Asserts |
