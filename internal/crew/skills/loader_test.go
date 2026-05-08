@@ -236,9 +236,12 @@ func TestSourceAcceptsValidSkillName(t *testing.T) {
 	}
 	for _, name := range cases {
 		t.Run(name, func(t *testing.T) {
-			// The skill won't exist in the embedded source, so the
-			// expected error is ErrNotFound, NOT ErrInvalidSkillName —
-			// proving validation accepts the name and lookup proceeds.
+			// Pins one thing only: validation accepts the name. The
+			// downstream lookup outcome varies per case (nil for
+			// "github" which exists in embedded fixtures; ErrNotFound
+			// for the others) and is irrelevant here — what matters
+			// is that the error is NOT ErrInvalidSkillName, proving
+			// validation didn't over-reject.
 			_, err := skills.EmbeddedSource{}.Skill(name)
 			if errors.Is(err, skills.ErrInvalidSkillName) {
 				t.Errorf("Skill(%q): unexpectedly rejected as invalid", name)
