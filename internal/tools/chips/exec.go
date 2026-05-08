@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+
+	"klazomenai/bridge/internal/tools/redact"
 )
 
 // ExecFn executes a command and returns its standard output (stdout).
@@ -48,9 +50,9 @@ func (a RepoAllowlist) Check(org, repo string) error {
 var SanitiseOutputForTest = sanitiseOutput
 
 // sanitiseOutput strips the GITHUB_TOKEN value from output if present.
+// Thin wrapper over redact.Redact so existing chips call sites keep
+// their two-argument shape; the package-level redactor is shared with
+// the audit-log path (sandbox.go).
 func sanitiseOutput(output, token string) string {
-	if token == "" {
-		return output
-	}
-	return strings.ReplaceAll(output, token, "[REDACTED]")
+	return redact.Redact(output, token)
 }
