@@ -48,7 +48,7 @@ func TestComposeOrderUniversalThenSkillThenProfile(t *testing.T) {
 	if uIdx < 0 || sIdx < 0 || pIdx < 0 {
 		t.Fatalf("Compose missing one of UNIV/SKILL/PROF in output:\n%s", out)
 	}
-	if !(uIdx < sIdx && sIdx < pIdx) {
+	if uIdx >= sIdx || sIdx >= pIdx {
 		t.Errorf("ordering wrong: UNIV=%d SKILL=%d PROF=%d", uIdx, sIdx, pIdx)
 	}
 }
