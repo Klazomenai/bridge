@@ -79,11 +79,14 @@ type Source interface {
 	Profile(name string) (Doc, error)
 }
 
-// FilesystemSource reads from a configurable root path.
+// FilesystemSource reads from a caller-provided root path. Doc.Path
+// values are slash-separated regardless of host OS so the API contract
+// stays consistent with EmbeddedSource.
 //
-// Production: /var/lib/klazomenai/skills (set in the Bridge image
-// by the Dockerfile dotfiles stage).
-// Development: KLAZOMENAI_SKILLS_DIR env var override.
+// The production wiring (image-baked /var/lib/klazomenai/skills mount,
+// KLAZOMENAI_SKILLS_DIR env override, Dockerfile multi-stage build of
+// the dotfiles bundle) lands in #148e. Today this struct only supplies
+// the read surface; callers choose Root.
 type FilesystemSource struct {
 	Root string
 }
@@ -175,11 +178,14 @@ func readFromFS(fsys fs.FS, embeddedPath, canonicalPath string) (Doc, error) {
 }
 
 // FallbackSource composes Primary then Secondary. ErrNotFound from
-// Primary falls through to Secondary; all other errors short-circuit.
+// Primary falls through to Secondary; all other errors short-circuit
+// (so a permission-denied on Primary is not silently masked by
+// Secondary's content).
 //
-// Used in production to layer FilesystemSource (allowing operator
-// override via the image's /var/lib/klazomenai/skills mount) over
-// EmbeddedSource (the binary-baked fallback).
+// The intended production layering — FilesystemSource as primary so
+// operators can override image-baked content, EmbeddedSource as
+// secondary so a missing/unmounted directory falls back gracefully —
+// is wired up in #148c. This sub-PR ships only the composition shape.
 type FallbackSource struct {
 	Primary, Secondary Source
 }

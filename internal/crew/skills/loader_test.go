@@ -3,6 +3,7 @@ package skills_test
 import (
 	"errors"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -14,6 +15,10 @@ import (
 // canonical relative path (e.g. "_universal.md", "github/SKILL.md").
 // Used by Compose tests to inject precise document content without
 // filesystem or embed.FS dependencies.
+//
+// Keys are slash-separated (path.Join, not filepath.Join) to match the
+// canonical Doc.Path contract — same shape as the production sources
+// regardless of host OS.
 type MapSource map[string]string
 
 func (m MapSource) Universal() (skills.Doc, error) {
@@ -21,11 +26,11 @@ func (m MapSource) Universal() (skills.Doc, error) {
 }
 
 func (m MapSource) Skill(name string) (skills.Doc, error) {
-	return m.lookup(filepath.Join(name, "SKILL.md"))
+	return m.lookup(path.Join(name, "SKILL.md"))
 }
 
 func (m MapSource) Profile(name string) (skills.Doc, error) {
-	return m.lookup(filepath.Join(name, "profile.md"))
+	return m.lookup(path.Join(name, "profile.md"))
 }
 
 func (m MapSource) lookup(path string) (skills.Doc, error) {
