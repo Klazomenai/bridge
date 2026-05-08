@@ -45,9 +45,9 @@ func Compose(persona string, skills []string, src Source) (string, error) {
 	}
 	// Reject nil src up front, regardless of skills emptiness, so the
 	// API contract is "src must be non-nil" rather than the conditional
-	// "src may be nil iff skills is empty". Fails fast and caller
-	// misconfiguration cannot reach the deref path below.
-	if src == nil {
+	// "src may be nil iff skills is empty". isNilSource also catches
+	// the typed-nil-in-interface case which `== nil` would miss.
+	if isNilSource(src) {
 		return "", ErrNilSource
 	}
 

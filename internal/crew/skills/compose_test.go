@@ -39,6 +39,20 @@ func TestComposeNilSourceReturnsError(t *testing.T) {
 	}
 }
 
+func TestComposeTypedNilSourceReturnsError(t *testing.T) {
+	// Go gotcha: a non-nil interface value holding a nil pointer
+	// (e.g. `var p *FilesystemSource = nil; var s Source = p`) passes
+	// `s == nil` (false) but panics on the first method call. Compose
+	// must catch this via the reflection-aware isNilSource helper.
+	var p *skills.FilesystemSource // nil pointer
+	var src skills.Source = p      // typed-nil stored in interface
+
+	_, err := skills.Compose("PERSONA", []string{"github"}, src)
+	if !errors.Is(err, skills.ErrNilSource) {
+		t.Errorf("expected ErrNilSource for typed-nil source, got %v", err)
+	}
+}
+
 func TestComposeNoSkillsReturnsPersonaUnchanged(t *testing.T) {
 	src := MapSource{
 		"_universal.md": "should not appear when skills is empty",

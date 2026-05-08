@@ -294,7 +294,13 @@ func TestFallbackSourceUsesFilesystemWhenPresent(t *testing.T) {
 func TestFallbackSourceRejectsNilPrimaryOrSecondary(t *testing.T) {
 	// Misconfiguration (forgetting Primary or Secondary at construction
 	// time) should surface as ErrNilSource, not panic at the closure
-	// dereference inside tryFallback.
+	// dereference inside tryFallback. Covers BOTH the bare-nil and
+	// typed-nil shapes — the latter is the Go gotcha where a non-nil
+	// interface holds a nil pointer (`var p *FilesystemSource = nil`)
+	// and would otherwise pass an `== nil` check yet panic on call.
+	var typedNilFS *skills.FilesystemSource     // nil pointer
+	var typedNilSrc skills.Source = typedNilFS  // typed-nil in interface
+
 	cases := []struct {
 		name string
 		src  skills.FallbackSource
@@ -302,6 +308,8 @@ func TestFallbackSourceRejectsNilPrimaryOrSecondary(t *testing.T) {
 		{"nil primary", skills.FallbackSource{Primary: nil, Secondary: skills.EmbeddedSource{}}},
 		{"nil secondary", skills.FallbackSource{Primary: skills.EmbeddedSource{}, Secondary: nil}},
 		{"both nil", skills.FallbackSource{}},
+		{"typed-nil primary", skills.FallbackSource{Primary: typedNilSrc, Secondary: skills.EmbeddedSource{}}},
+		{"typed-nil secondary", skills.FallbackSource{Primary: skills.EmbeddedSource{}, Secondary: typedNilSrc}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -1,6 +1,5 @@
-// Package skills provides the loader/compose surface for Bridge's
-// skill-based system-prompt augmentation. It is consumed by
-// klazomenai/bridge/internal/crew at registry-load time.
+// Package skills provides a loader/compose surface for skill-based
+// system-prompt augmentation.
 //
 // The package implements three Source variants (FilesystemSource,
 // EmbeddedSource, FallbackSource) over the documented dotfiles layout:
@@ -12,6 +11,9 @@
 // Compose renders a persona system prompt augmented with the universal
 // addendum, per-skill SKILL.md content, and per-skill profile content
 // (where present). See compose.go for output format.
+//
+// This package is purely additive: callers will be wired up in a
+// later sub-PR.
 package skills
 
 import (
@@ -21,6 +23,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"reflect"
 	"regexp"
 )
 
@@ -35,6 +38,24 @@ var ErrNotFound = errors.New("skills: doc not found")
 // misconfiguration is reported via the error path instead of a
 // runtime panic.
 var ErrNilSource = errors.New("skills: nil source")
+
+// isNilSource detects both the bare-nil interface case (s == nil) and
+// the typed-nil case (s holds a non-nil type pointer with nil value,
+// e.g. var p *FilesystemSource = nil; var s Source = p). The latter
+// would otherwise pass an `s == nil` check yet panic at the first
+// method call — a subtle Go gotcha worth defending against at every
+// public-API entry point that takes a Source.
+func isNilSource(s Source) bool {
+	if s == nil {
+		return true
+	}
+	rv := reflect.ValueOf(s)
+	switch rv.Kind() {
+	case reflect.Ptr, reflect.Interface, reflect.Chan, reflect.Func, reflect.Map, reflect.Slice:
+		return rv.IsNil()
+	}
+	return false
+}
 
 // ErrInvalidSkillName is returned by Source implementations when the
 // supplied skill name violates the naming convention. The constraint
@@ -89,11 +110,6 @@ type Source interface {
 // FilesystemSource reads from a caller-provided root path. Doc.Path
 // values are slash-separated regardless of host OS so the API contract
 // stays consistent with EmbeddedSource.
-//
-// The production wiring (image-baked /var/lib/klazomenai/skills mount,
-// KLAZOMENAI_SKILLS_DIR env override, Dockerfile multi-stage build of
-// the dotfiles bundle) lands in #148e. Today this struct only supplies
-// the read surface; callers choose Root.
 type FilesystemSource struct {
 	Root string
 }
@@ -187,21 +203,17 @@ func readFromFS(fsys fs.FS, embeddedPath, canonicalPath string) (Doc, error) {
 // FallbackSource composes Primary then Secondary. ErrNotFound from
 // Primary falls through to Secondary; all other errors short-circuit
 // (so a permission-denied on Primary is not silently masked by
-// Secondary's content).
-//
-// The intended production layering — FilesystemSource as primary so
-// operators can override image-baked content, EmbeddedSource as
-// secondary so a missing/unmounted directory falls back gracefully —
-// is wired up in #148c. This sub-PR ships only the composition shape.
+// Secondary's content). Both fields must be non-nil — see validate.
 type FallbackSource struct {
 	Primary, Secondary Source
 }
 
-// validate returns ErrNilSource if either Primary or Secondary is nil.
-// Called at the top of every FallbackSource method so misconfiguration
-// surfaces as an error rather than a panic at the closure dereference.
+// validate returns ErrNilSource if either Primary or Secondary is nil
+// (or typed-nil — see isNilSource). Called at the top of every
+// FallbackSource method so misconfiguration surfaces as an error
+// rather than a panic at the closure dereference.
 func (f FallbackSource) validate() error {
-	if f.Primary == nil || f.Secondary == nil {
+	if isNilSource(f.Primary) || isNilSource(f.Secondary) {
 		return fmt.Errorf("%w: FallbackSource requires both Primary and Secondary", ErrNilSource)
 	}
 	return nil
