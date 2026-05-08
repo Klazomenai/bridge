@@ -29,6 +29,13 @@ import (
 // are matched via errors.Is.
 var ErrNotFound = errors.New("skills: doc not found")
 
+// ErrNilSource is the sentinel returned when a Source argument is nil.
+// Returned by Compose (when the src parameter is nil) and by
+// FallbackSource methods (when Primary or Secondary is nil) so caller
+// misconfiguration is reported via the error path instead of a
+// runtime panic.
+var ErrNilSource = errors.New("skills: nil source")
+
 // ErrInvalidSkillName is returned by Source implementations when the
 // supplied skill name violates the naming convention. The constraint
 // is intentionally strict: only lowercase letters, digits, and dashes;
@@ -190,13 +197,29 @@ type FallbackSource struct {
 	Primary, Secondary Source
 }
 
+// validate returns ErrNilSource if either Primary or Secondary is nil.
+// Called at the top of every FallbackSource method so misconfiguration
+// surfaces as an error rather than a panic at the closure dereference.
+func (f FallbackSource) validate() error {
+	if f.Primary == nil || f.Secondary == nil {
+		return fmt.Errorf("%w: FallbackSource requires both Primary and Secondary", ErrNilSource)
+	}
+	return nil
+}
+
 // Universal tries Primary, falling back to Secondary on ErrNotFound.
 func (f FallbackSource) Universal() (Doc, error) {
+	if err := f.validate(); err != nil {
+		return Doc{}, err
+	}
 	return f.tryFallback(f.Primary.Universal, f.Secondary.Universal)
 }
 
 // Skill tries Primary, falling back to Secondary on ErrNotFound.
 func (f FallbackSource) Skill(name string) (Doc, error) {
+	if err := f.validate(); err != nil {
+		return Doc{}, err
+	}
 	return f.tryFallback(
 		func() (Doc, error) { return f.Primary.Skill(name) },
 		func() (Doc, error) { return f.Secondary.Skill(name) },
@@ -205,6 +228,9 @@ func (f FallbackSource) Skill(name string) (Doc, error) {
 
 // Profile tries Primary, falling back to Secondary on ErrNotFound.
 func (f FallbackSource) Profile(name string) (Doc, error) {
+	if err := f.validate(); err != nil {
+		return Doc{}, err
+	}
 	return f.tryFallback(
 		func() (Doc, error) { return f.Primary.Profile(name) },
 		func() (Doc, error) { return f.Secondary.Profile(name) },

@@ -226,8 +226,12 @@ func TestSourceAcceptsValidSkillName(t *testing.T) {
 // ----------------------------------------------------------------------
 
 func TestFallbackSourceUsesEmbeddedWhenFilesystemMissing(t *testing.T) {
+	// Construct a guaranteed-missing path under t.TempDir() rather than
+	// hardcoding "/nonexistent/path" (POSIX-only and host-dependent).
+	// The TempDir itself exists; the subdir we name does not.
+	missing := filepath.Join(t.TempDir(), "does-not-exist")
 	src := skills.FallbackSource{
-		Primary:   skills.FilesystemSource{Root: "/nonexistent/path"},
+		Primary:   skills.FilesystemSource{Root: missing},
 		Secondary: skills.EmbeddedSource{},
 	}
 	doc, err := src.Skill("github")
@@ -258,6 +262,33 @@ func TestFallbackSourceUsesFilesystemWhenPresent(t *testing.T) {
 	}
 	if doc.Content != "OVERRIDE-SENTINEL" {
 		t.Errorf("filesystem primary should win, got %q", doc.Content)
+	}
+}
+
+func TestFallbackSourceRejectsNilPrimaryOrSecondary(t *testing.T) {
+	// Misconfiguration (forgetting Primary or Secondary at construction
+	// time) should surface as ErrNilSource, not panic at the closure
+	// dereference inside tryFallback.
+	cases := []struct {
+		name string
+		src  skills.FallbackSource
+	}{
+		{"nil primary", skills.FallbackSource{Primary: nil, Secondary: skills.EmbeddedSource{}}},
+		{"nil secondary", skills.FallbackSource{Primary: skills.EmbeddedSource{}, Secondary: nil}},
+		{"both nil", skills.FallbackSource{}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := tc.src.Universal(); !errors.Is(err, skills.ErrNilSource) {
+				t.Errorf("Universal: expected ErrNilSource, got %v", err)
+			}
+			if _, err := tc.src.Skill("github"); !errors.Is(err, skills.ErrNilSource) {
+				t.Errorf("Skill: expected ErrNilSource, got %v", err)
+			}
+			if _, err := tc.src.Profile("github"); !errors.Is(err, skills.ErrNilSource) {
+				t.Errorf("Profile: expected ErrNilSource, got %v", err)
+			}
+		})
 	}
 }
 

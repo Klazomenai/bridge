@@ -16,6 +16,29 @@ func TestComposeEmptyPersonaReturnsError(t *testing.T) {
 	}
 }
 
+func TestComposeNilSourceReturnsError(t *testing.T) {
+	// Nil src must surface as ErrNilSource for ANY skills shape, even
+	// empty — the contract is "src must be non-nil", not the
+	// conditional "src may be nil iff skills is empty". This prevents
+	// caller misconfiguration from reaching the deref path inside the
+	// loop below.
+	cases := []struct {
+		name   string
+		skills []string
+	}{
+		{"empty skills", nil},
+		{"non-empty skills", []string{"github"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := skills.Compose("PERSONA", tc.skills, nil)
+			if !errors.Is(err, skills.ErrNilSource) {
+				t.Errorf("expected ErrNilSource, got %v", err)
+			}
+		})
+	}
+}
+
 func TestComposeNoSkillsReturnsPersonaUnchanged(t *testing.T) {
 	src := MapSource{
 		"_universal.md": "should not appear when skills is empty",
