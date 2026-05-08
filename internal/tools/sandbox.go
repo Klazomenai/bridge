@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log/slog"
 	"time"
+
+	"klazomenai/bridge/internal/tools/redact"
 )
 
 const (
@@ -23,10 +25,33 @@ type SandboxConfig struct {
 }
 
 // SandboxMeta carries per-invocation context for structured audit logging.
+//
+// Fields:
+//   - CrewID, RoomID, ToolName — identifying context for the invocation
+//   - Mutation — whether the tool mutates external state (set by callers
+//     via tools.IsMutation(tool))
+//   - Logger — destination for the structured audit + execution events
+//     emitted by ExecuteWithSandbox; nil falls back to slog.Default()
+//   - Secrets — values to redact from the audit log's argv field via
+//     redact.Redact (e.g. GITHUB_TOKEN); empty entries are skipped
 type SandboxMeta struct {
 	CrewID   string
 	RoomID   string
 	ToolName string
+	Mutation bool
+	Logger   *slog.Logger
+	Secrets  []string
+}
+
+// logger returns the SandboxMeta's logger, falling back to slog.Default()
+// when nil. Callers within this package use this helper instead of the
+// package-level slog.* functions so per-invocation logger injection works
+// for tests and future per-room routing.
+func (m SandboxMeta) logger() *slog.Logger {
+	if m.Logger != nil {
+		return m.Logger
+	}
+	return slog.Default()
 }
 
 // DefaultSandboxConfig returns a SandboxConfig with production defaults.
@@ -53,6 +78,20 @@ func ExecuteWithSandbox(ctx context.Context, tool ToolDefinition, input json.Raw
 	if cfg.MaxOutputLen <= 0 {
 		cfg.MaxOutputLen = DefaultMaxOutputLen
 	}
+
+	logger := meta.logger()
+
+	// Audit record — emitted before execution so an in-flight panic or
+	// timeout still leaves a trail of the attempted invocation. The
+	// argv field is redacted using meta.Secrets to keep tokens out of
+	// the log destination (stdout, journald, downstream collectors).
+	logger.Info("audit: tool invoked",
+		"tool", meta.ToolName,
+		"crew", meta.CrewID,
+		"room", meta.RoomID,
+		"mutation", meta.Mutation,
+		"argv_redacted", redact.Redact(string(input), meta.Secrets...),
+	)
 
 	start := time.Now()
 
@@ -83,7 +122,7 @@ func ExecuteWithSandbox(ctx context.Context, tool ToolDefinition, input json.Raw
 			}
 		}
 
-		slog.Warn("sandbox: tool execution failed",
+		logger.Warn("sandbox: tool execution failed",
 			"tool", meta.ToolName, "crew", meta.CrewID,
 			"room", meta.RoomID, "duration_ms", elapsed.Milliseconds(),
 			"err", execErr)
@@ -99,7 +138,7 @@ func ExecuteWithSandbox(ctx context.Context, tool ToolDefinition, input json.Raw
 		}
 	}
 
-	slog.Info("sandbox: tool executed",
+	logger.Info("sandbox: tool executed",
 		"tool", meta.ToolName, "crew", meta.CrewID,
 		"room", meta.RoomID, "duration_ms", elapsed.Milliseconds(),
 		"output_len_bytes", len(output))

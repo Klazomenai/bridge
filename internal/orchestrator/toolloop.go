@@ -168,7 +168,12 @@ func (o *Orchestrator) executeToolCalls(ctx context.Context, content []anthropic
 			continue
 		}
 
-		meta := tools.SandboxMeta{CrewID: crewID, RoomID: roomID, ToolName: block.Name}
+		meta := tools.SandboxMeta{
+			CrewID:   crewID,
+			RoomID:   roomID,
+			ToolName: block.Name,
+			Mutation: tools.IsMutation(tool),
+		}
 		result, isError := tools.ExecuteWithSandbox(ctx, tool, block.Input, o.sandboxCfg, meta)
 
 		// Detect delegation sentinel — only from the delegate_to_crew tool.
