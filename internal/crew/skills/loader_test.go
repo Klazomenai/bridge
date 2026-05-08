@@ -151,6 +151,72 @@ func TestEmbeddedSourceSkillWithoutProfileReturnsErrNotFound(t *testing.T) {
 }
 
 // ----------------------------------------------------------------------
+// Skill name validation — applied at Source.Skill / Source.Profile
+// entry points across all impls. Defence-in-depth against path-traversal
+// even though skill names are operator-controlled via crew.yaml today.
+// ----------------------------------------------------------------------
+
+func TestSourceRejectsTraversalSkillName(t *testing.T) {
+	cases := []string{
+		"../etc",
+		"../../../etc/passwd",
+		"foo/../bar",
+		"/absolute",
+		"foo/bar",
+		`foo\bar`,
+		"..",
+		".",
+		".hidden",
+		"",
+		"Github",
+		"my_skill",
+		"foo bar",
+	}
+	for _, name := range cases {
+		t.Run(name, func(t *testing.T) {
+			fsSrc := skills.FilesystemSource{Root: t.TempDir()}
+			if _, err := fsSrc.Skill(name); !errors.Is(err, skills.ErrInvalidSkillName) {
+				t.Errorf("FilesystemSource.Skill(%q): expected ErrInvalidSkillName, got %v", name, err)
+			}
+			if _, err := fsSrc.Profile(name); !errors.Is(err, skills.ErrInvalidSkillName) {
+				t.Errorf("FilesystemSource.Profile(%q): expected ErrInvalidSkillName, got %v", name, err)
+			}
+
+			emSrc := skills.EmbeddedSource{}
+			if _, err := emSrc.Skill(name); !errors.Is(err, skills.ErrInvalidSkillName) {
+				t.Errorf("EmbeddedSource.Skill(%q): expected ErrInvalidSkillName, got %v", name, err)
+			}
+			if _, err := emSrc.Profile(name); !errors.Is(err, skills.ErrInvalidSkillName) {
+				t.Errorf("EmbeddedSource.Profile(%q): expected ErrInvalidSkillName, got %v", name, err)
+			}
+		})
+	}
+}
+
+func TestSourceAcceptsValidSkillName(t *testing.T) {
+	cases := []string{
+		"github",
+		"kubernetes",
+		"my-skill",
+		"k8s",
+		"skill1",
+		"a",
+		"foo-bar-baz",
+	}
+	for _, name := range cases {
+		t.Run(name, func(t *testing.T) {
+			// The skill won't exist in the embedded source, so the
+			// expected error is ErrNotFound, NOT ErrInvalidSkillName —
+			// proving validation accepts the name and lookup proceeds.
+			_, err := skills.EmbeddedSource{}.Skill(name)
+			if errors.Is(err, skills.ErrInvalidSkillName) {
+				t.Errorf("Skill(%q): unexpectedly rejected as invalid", name)
+			}
+		})
+	}
+}
+
+// ----------------------------------------------------------------------
 // FallbackSource
 // ----------------------------------------------------------------------
 

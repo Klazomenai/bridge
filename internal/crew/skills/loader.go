@@ -19,13 +19,39 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
+	"regexp"
 )
 
 // ErrNotFound is the sentinel returned by Source implementations when
 // a requested document does not exist. Wrapped errors that include it
 // are matched via errors.Is.
 var ErrNotFound = errors.New("skills: doc not found")
+
+// ErrInvalidSkillName is returned by Source implementations when the
+// supplied skill name violates the naming convention. The constraint
+// is intentionally strict: only lowercase letters, digits, and dashes;
+// must start with a letter or digit. This rejects path-traversal
+// attempts (`..`, `/`, `\`) and shell-meaningful characters at the
+// type-system boundary, irrespective of whether the operator-controlled
+// `crew.yaml` is the only producer of skill names today.
+var ErrInvalidSkillName = errors.New("skills: invalid skill name")
+
+// skillNamePattern matches the dotfiles `claude/skills/<name>/` naming
+// convention: lowercase alphanumeric with optional dashes.
+var skillNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
+
+// validateSkillName rejects names that would escape <Root>/ or break
+// the canonical relative path structure used by Doc.Path. Applied at
+// every Source.Skill / Source.Profile entry point so any future Source
+// implementation inherits the guarantee.
+func validateSkillName(name string) error {
+	if !skillNamePattern.MatchString(name) {
+		return fmt.Errorf("%w: %q", ErrInvalidSkillName, name)
+	}
+	return nil
+}
 
 // Doc is a single loaded skill artefact. Path is the source-relative
 // canonical key (e.g. "_universal.md", "github/SKILL.md",
@@ -67,18 +93,30 @@ func (s FilesystemSource) Universal() (Doc, error) {
 	return s.read("_universal.md")
 }
 
-// Skill returns <Root>/<name>/SKILL.md.
+// Skill returns <Root>/<name>/SKILL.md. Returns ErrInvalidSkillName
+// (wrapped) if name fails validation.
 func (s FilesystemSource) Skill(name string) (Doc, error) {
-	return s.read(filepath.Join(name, "SKILL.md"))
+	if err := validateSkillName(name); err != nil {
+		return Doc{}, err
+	}
+	return s.read(path.Join(name, "SKILL.md"))
 }
 
-// Profile returns <Root>/<name>/profile.md.
+// Profile returns <Root>/<name>/profile.md. Returns ErrInvalidSkillName
+// (wrapped) if name fails validation.
 func (s FilesystemSource) Profile(name string) (Doc, error) {
-	return s.read(filepath.Join(name, "profile.md"))
+	if err := validateSkillName(name); err != nil {
+		return Doc{}, err
+	}
+	return s.read(path.Join(name, "profile.md"))
 }
 
+// read takes a slash-separated canonical path (the same shape used in
+// Doc.Path) and resolves it on disk via filepath.FromSlash so the
+// canonical key stays OS-independent while the on-disk read uses the
+// host's path separator.
 func (s FilesystemSource) read(rel string) (Doc, error) {
-	full := filepath.Join(s.Root, rel)
+	full := filepath.Join(s.Root, filepath.FromSlash(rel))
 	content, err := os.ReadFile(full)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
@@ -101,15 +139,27 @@ func (EmbeddedSource) Universal() (Doc, error) {
 	return readFromFS(embeddedFS, "embedded/_universal.md", "_universal.md")
 }
 
-// Skill reads embedded/<name>/SKILL.md.
+// Skill reads embedded/<name>/SKILL.md. Returns ErrInvalidSkillName
+// (wrapped) if name fails validation.
+//
+// embed.FS uses slash-separated paths regardless of OS, so path.Join
+// (not filepath.Join) is used both for the embedded lookup and the
+// canonical Doc.Path so the return value is OS-independent.
 func (EmbeddedSource) Skill(name string) (Doc, error) {
-	rel := filepath.Join(name, "SKILL.md")
+	if err := validateSkillName(name); err != nil {
+		return Doc{}, err
+	}
+	rel := path.Join(name, "SKILL.md")
 	return readFromFS(embeddedFS, "embedded/"+rel, rel)
 }
 
-// Profile reads embedded/<name>/profile.md.
+// Profile reads embedded/<name>/profile.md. Returns ErrInvalidSkillName
+// (wrapped) if name fails validation.
 func (EmbeddedSource) Profile(name string) (Doc, error) {
-	rel := filepath.Join(name, "profile.md")
+	if err := validateSkillName(name); err != nil {
+		return Doc{}, err
+	}
+	rel := path.Join(name, "profile.md")
 	return readFromFS(embeddedFS, "embedded/"+rel, rel)
 }
 

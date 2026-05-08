@@ -54,7 +54,10 @@ func Compose(persona string, skills []string, src Source) (string, error) {
 	universal, err := src.Universal()
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
-			return "", fmt.Errorf("%w: %v", ErrUniversalRequired, err)
+			// Multi-%w preserves both sentinels in the wrap chain so
+			// callers can match either with errors.Is — required by
+			// the doc contract on ErrUniversalRequired.
+			return "", fmt.Errorf("%w: %w", ErrUniversalRequired, err)
 		}
 		return "", fmt.Errorf("compose: load universal: %w", err)
 	}

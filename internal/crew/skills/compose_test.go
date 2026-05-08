@@ -101,6 +101,12 @@ func TestComposeMissingUniversalIsError(t *testing.T) {
 	if !errors.Is(err, skills.ErrUniversalRequired) {
 		t.Errorf("expected ErrUniversalRequired, got %v", err)
 	}
+	// The doc contract on ErrUniversalRequired promises the underlying
+	// ErrNotFound is preserved in the wrap chain so callers can match
+	// either sentinel with errors.Is.
+	if !errors.Is(err, skills.ErrNotFound) {
+		t.Errorf("expected ErrNotFound also reachable via errors.Is, got %v", err)
+	}
 }
 
 func TestComposeMissingSkillIsError(t *testing.T) {
