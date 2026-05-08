@@ -174,7 +174,11 @@ func TestComposePreservesPersonaTrimsTrailingNewlines(t *testing.T) {
 	}
 	// Persona's trailing newlines should be trimmed; persona+universal
 	// boundary should be exactly "\n\n".
+	//
+	// Failure message dumps the full output rather than slicing — a
+	// regression returning <60 chars must surface a clean test failure,
+	// not a slice panic that masks the real cause.
 	if !strings.HasPrefix(out, "PERSONA\n\n## Operator Universal Rules") {
-		t.Errorf("persona trim/separator wrong, got prefix:\n%s", out[:60])
+		t.Errorf("persona trim/separator wrong, got:\n%s", out)
 	}
 }

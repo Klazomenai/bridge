@@ -143,13 +143,39 @@ func TestEmbeddedSourceUnknownSkillReturnsErrNotFound(t *testing.T) {
 	}
 }
 
-func TestEmbeddedSourceSkillWithoutProfileReturnsErrNotFound(t *testing.T) {
-	// github currently has both SKILL.md AND profile.md, so this test
-	// pins the contract: when a skill has no profile, Profile() returns
-	// ErrNotFound. Once a skill ships without a profile addendum, this
-	// test exercises that path.
+func TestEmbeddedSourceProfileForUnknownSkillReturnsErrNotFound(t *testing.T) {
+	// Profile() for an unknown skill name (one that has neither SKILL.md
+	// nor profile.md in the embedded fixtures) must return ErrNotFound,
+	// not a different sentinel — Compose treats this as soft and skips
+	// the profile section. The complementary "skill exists but profile
+	// missing" semantic is exercised separately in
+	// TestFilesystemSourceProfileMissingForExistingSkillReturnsErrNotFound,
+	// where a temp-dir fixture lets us pin that contract directly.
 	src := skills.EmbeddedSource{}
 	_, err := src.Profile("nonexistent-skill")
+	if !errors.Is(err, skills.ErrNotFound) {
+		t.Errorf("expected ErrNotFound, got %v", err)
+	}
+}
+
+func TestFilesystemSourceProfileMissingForExistingSkillReturnsErrNotFound(t *testing.T) {
+	// Genuine "skill present, profile absent" coverage: seed only
+	// <tmp>/foo/SKILL.md (no profile.md), then assert Profile("foo")
+	// returns ErrNotFound. Compose's missing-profile-falls-through
+	// branch relies on this exact sentinel.
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "foo"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "foo", "SKILL.md"), []byte("SKILL"), 0o600); err != nil {
+		t.Fatalf("seed SKILL.md: %v", err)
+	}
+	// Sanity: skill itself is present.
+	if _, err := (skills.FilesystemSource{Root: dir}).Skill("foo"); err != nil {
+		t.Fatalf("Skill(foo) seeding broken: %v", err)
+	}
+	// The contract under test: profile is absent → ErrNotFound.
+	_, err := (skills.FilesystemSource{Root: dir}).Profile("foo")
 	if !errors.Is(err, skills.ErrNotFound) {
 		t.Errorf("expected ErrNotFound, got %v", err)
 	}
