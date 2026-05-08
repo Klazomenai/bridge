@@ -739,3 +739,91 @@ func TestNonChipsCrewLackGitHubSkill(t *testing.T) {
 		}
 	}
 }
+
+const yamlWithSkills = `
+default_crew: chips
+crew:
+  chips:
+    name: "Chips"
+    role: "The Carpenter"
+    model: "claude-sonnet-4-6"
+    verbosity: log-entry
+    skills: [github]
+    voice:
+      model: TBD
+      announces_as: "Chips:"
+    system_prompt: "You are Chips. Respond in {verbosity}"
+`
+
+func TestSkillsParsedFromYAML(t *testing.T) {
+	path := writeRegistry(t, yamlWithSkills)
+	r, err := crew.Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	chips := r.Get("chips")
+	if got := chips.Skills(); len(got) != 1 || got[0] != "github" {
+		t.Errorf("expected [github], got %v", got)
+	}
+}
+
+func TestSkillsEmptyWhenOmitted(t *testing.T) {
+	path := writeRegistry(t, validYAML)
+	r, err := crew.Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := r.Get("maren").Skills(); got != nil {
+		t.Errorf("expected nil skills for maren, got %v", got)
+	}
+}
+
+func TestSkillsRejectsDuplicates(t *testing.T) {
+	const dupYAML = `
+default_crew: chips
+crew:
+  chips:
+    name: "Chips"
+    role: "The Carpenter"
+    model: "claude-sonnet-4-6"
+    verbosity: log-entry
+    skills: [github, github]
+    voice:
+      model: TBD
+      announces_as: "Chips:"
+    system_prompt: "You are Chips. Respond in {verbosity}"
+`
+	path := writeRegistry(t, dupYAML)
+	_, err := crew.Load(path)
+	if err == nil {
+		t.Fatal("expected duplicate-skill error")
+	}
+	if !strings.Contains(err.Error(), "duplicate skill") {
+		t.Errorf("expected duplicate-skill in error, got: %v", err)
+	}
+}
+
+func TestSkillsRejectsEmptyEntry(t *testing.T) {
+	const emptyYAML = `
+default_crew: chips
+crew:
+  chips:
+    name: "Chips"
+    role: "The Carpenter"
+    model: "claude-sonnet-4-6"
+    verbosity: log-entry
+    skills: [""]
+    voice:
+      model: TBD
+      announces_as: "Chips:"
+    system_prompt: "You are Chips. Respond in {verbosity}"
+`
+	path := writeRegistry(t, emptyYAML)
+	_, err := crew.Load(path)
+	if err == nil {
+		t.Fatal("expected empty-skill-name error")
+	}
+	if !strings.Contains(err.Error(), "must not be empty") {
+		t.Errorf("expected must-not-be-empty in error, got: %v", err)
+	}
+}

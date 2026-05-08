@@ -41,6 +41,12 @@ type crewEntryYAML struct {
 	Voice        voiceYAML `yaml:"voice"`
 	SystemPrompt string    `yaml:"system_prompt"`
 	Tools        []string  `yaml:"tools"`
+	// Skills is the optional list of skill names whose SKILL.md (and
+	// optional profile.md) get appended to the crew member's system
+	// prompt at registry-load time via the skills package's Compose
+	// function. Empty / omitted means the crew gets persona+verbosity
+	// only — current Maren/Crest/Bosun/Lookout behaviour.
+	Skills []string `yaml:"skills"`
 }
 
 type voiceYAML struct {
@@ -107,6 +113,7 @@ func Load(path string) (*Registry, error) {
 			announcesAs:  entry.Voice.AnnouncesAs,
 			voiceModel:   entry.Voice.Model,
 			tools:        entry.Tools,
+			skills:       entry.Skills,
 		}
 	}
 
@@ -138,6 +145,16 @@ func validateEntry(id string, e crewEntryYAML) error {
 	}
 	if e.Voice.AnnouncesAs == "" {
 		return fmt.Errorf("crew %s: voice.announces_as is required", id)
+	}
+	seen := make(map[string]bool, len(e.Skills))
+	for _, name := range e.Skills {
+		if name == "" {
+			return fmt.Errorf("crew %s: skill name must not be empty", id)
+		}
+		if seen[name] {
+			return fmt.Errorf("crew %s: duplicate skill %q", id, name)
+		}
+		seen[name] = true
 	}
 	return nil
 }

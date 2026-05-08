@@ -11,6 +11,11 @@ type Crew interface {
 	AnnouncesAs() string
 	VoiceModel() string
 	Tools() []string
+	// Skills returns the names of skills declared in crew.yaml's
+	// `skills:` field. Each name resolves to a `<name>/SKILL.md` (and
+	// optional `<name>/profile.md`) in the skills source. Returns nil
+	// for crew with no skills declared.
+	Skills() []string
 }
 
 // BaseCrew holds the parsed crew member configuration.
@@ -24,6 +29,7 @@ type BaseCrew struct {
 	announcesAs  string
 	voiceModel   string
 	tools        []string
+	skills       []string
 }
 
 func (c *BaseCrew) ID() string           { return c.id }
@@ -40,5 +46,16 @@ func (c *BaseCrew) Tools() []string {
 	}
 	out := make([]string, len(c.tools))
 	copy(out, c.tools)
+	return out
+}
+
+// Skills returns a copy of the crew's declared skill names. Returns nil
+// when no skills are declared.
+func (c *BaseCrew) Skills() []string {
+	if len(c.skills) == 0 {
+		return nil
+	}
+	out := make([]string, len(c.skills))
+	copy(out, c.skills)
 	return out
 }
