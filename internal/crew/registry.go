@@ -133,7 +133,11 @@ func LoadWithSource(path string, source skills.Source) (*Registry, error) {
 		if !ok {
 			return nil, fmt.Errorf("crew %s: unknown verbosity %q", id, entry.Verbosity)
 		}
-		prompt := strings.ReplaceAll(entry.SystemPrompt, "{verbosity}", verbDesc)
+		// Render the persona once with {verbosity} substituted, then
+		// derive both prompt paths from it. The id-gate mutates only
+		// `prompt`; Compose receives the unmutated persona.
+		persona := strings.ReplaceAll(entry.SystemPrompt, "{verbosity}", verbDesc)
+		prompt := persona
 		if id == "chips" {
 			// TrimRight bounds the separator on the prompt side: YAML `|`
 			// literal block scalars produce a trailing newline today, but
@@ -149,7 +153,6 @@ func LoadWithSource(path string, source skills.Source) (*Registry, error) {
 		// the gate flip.
 		var composeOutput string
 		if len(entry.Skills) > 0 {
-			persona := strings.ReplaceAll(entry.SystemPrompt, "{verbosity}", verbDesc)
 			composed, err := skills.Compose(persona, entry.Skills, source)
 			if err != nil {
 				return nil, fmt.Errorf("crew %s: %w", id, err)
@@ -304,30 +307,17 @@ type SkillChecker interface {
 // reload.
 func (r *Registry) ValidateSkills(checker SkillChecker) error {
 	var issues []string
-
-	// Universal is a prerequisite only when at least one crew has
-	// declared skills (matches Compose's behaviour: empty skills slice
-	// returns the persona unchanged without consulting Universal).
 	anySkills := false
-	for _, c := range r.crew {
-		if len(c.Skills()) > 0 {
-			anySkills = true
-			break
-		}
-	}
-	if anySkills {
-		if _, err := checker.Universal(); err != nil {
-			switch {
-			case errors.Is(err, skills.ErrNotFound):
-				issues = append(issues, `universal addendum missing ("_universal.md" not in skill source)`)
-			default:
-				issues = append(issues, fmt.Sprintf("validating universal addendum: %v", err))
-			}
-		}
-	}
 
+	// Per-crew pass: compute anySkills inline and walk each declared
+	// skill exactly once. Caching c.Skills() per crew avoids the
+	// double defensive-copy that Skills() incurs.
 	for id, c := range r.crew {
-		for _, name := range c.Skills() {
+		skillNames := c.Skills()
+		if len(skillNames) > 0 {
+			anySkills = true
+		}
+		for _, name := range skillNames {
 			_, err := checker.Skill(name)
 			if err == nil {
 				continue
@@ -342,6 +332,23 @@ func (r *Registry) ValidateSkills(checker SkillChecker) error {
 			}
 		}
 	}
+
+	// Universal is a prerequisite only when at least one crew has
+	// declared skills (matches Compose's behaviour: empty skills slice
+	// returns the persona unchanged without consulting Universal).
+	// Run after the per-skill pass — sort.Strings below normalises
+	// output order regardless of insertion order.
+	if anySkills {
+		if _, err := checker.Universal(); err != nil {
+			switch {
+			case errors.Is(err, skills.ErrNotFound):
+				issues = append(issues, `universal addendum missing ("_universal.md" not in skill source)`)
+			default:
+				issues = append(issues, fmt.Sprintf("validating universal addendum: %v", err))
+			}
+		}
+	}
+
 	if len(issues) == 0 {
 		return nil
 	}
