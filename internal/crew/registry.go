@@ -2,12 +2,15 @@ package crew
 
 import (
 	_ "embed"
+	"errors"
 	"fmt"
 	"os"
 	"sort"
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"klazomenai/bridge/internal/crew/skills"
 )
 
 // chipsGitHubSkill is the curated github skill body, vendored from the operator's
@@ -41,6 +44,16 @@ type crewEntryYAML struct {
 	Voice        voiceYAML `yaml:"voice"`
 	SystemPrompt string    `yaml:"system_prompt"`
 	Tools        []string  `yaml:"tools"`
+	// Skills is the optional list of skill names whose SKILL.md (and
+	// optional profile.md) drive the Compose-rendered prompt for this
+	// crew member at registry-load time via the skills package's
+	// Compose function. The result is stored on
+	// BaseCrew.composeOutput and reachable via Crew.ComposeOutput;
+	// SystemPrompt continues to return the id-gate output until the
+	// gate flip in #154. Empty / omitted means the crew gets
+	// persona+verbosity only — current Maren/Crest/Bosun/Lookout
+	// behaviour.
+	Skills []string `yaml:"skills"`
 }
 
 type voiceYAML struct {
@@ -54,8 +67,39 @@ type Registry struct {
 	crew        map[string]Crew
 }
 
-// Load parses the crew YAML at path and returns a Registry.
+// Load parses the crew YAML at path and returns a Registry. Skills
+// declared on crew entries (via the `skills: []` field) are composed
+// against an EmbeddedSource by default — production callers wanting
+// to layer a filesystem override on top should call LoadWithSource
+// with a FallbackSource.
 func Load(path string) (*Registry, error) {
+	return LoadWithSource(path, skills.EmbeddedSource{})
+}
+
+// LoadWithSource is Load with a caller-provided skills.Source. Used by
+// tests (injecting a MapSource for hermetic Compose-output assertions)
+// and by future callers (e.g. main.go) that want to layer a filesystem
+// override over the embedded fallback.
+//
+// For each crew entry with a non-empty `skills:` list, this function
+// invokes skills.Compose against the supplied source and stores the
+// rendered prompt on BaseCrew.composeOutput, reachable via
+// BaseCrew.ComposeOutput. The legacy `if id == "chips"` gate remains
+// the source of truth for SystemPrompt() in this sub-PR — the gate
+// flip happens in #154 (PR4). This dual-path arrangement gives PR4's
+// L2 enforcement tests an A/B affordance: legacy output through
+// SystemPrompt(), new output through ComposeOutput(), both renderable
+// without changing crew.yaml.
+//
+// LoadWithSource fails fast on any skill that does not resolve via the
+// supplied source: Compose's wrapped ErrNotFound (or ErrUniversalRequired
+// for a missing universal) propagates out. To pre-flight a candidate
+// source against an already-loaded registry — e.g. comparing an
+// updated dotfiles ref against the currently-deployed crew.yaml before
+// rolling out — first load with a known-good source (typically the
+// default EmbeddedSource via Load), then call Registry.ValidateSkills
+// against the candidate.
+func LoadWithSource(path string, source skills.Source) (*Registry, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("reading crew registry %s: %w", path, err)
@@ -89,7 +133,11 @@ func Load(path string) (*Registry, error) {
 		if !ok {
 			return nil, fmt.Errorf("crew %s: unknown verbosity %q", id, entry.Verbosity)
 		}
-		prompt := strings.ReplaceAll(entry.SystemPrompt, "{verbosity}", verbDesc)
+		// Render the persona once with {verbosity} substituted, then
+		// derive both prompt paths from it. The id-gate mutates only
+		// `prompt`; Compose receives the unmutated persona.
+		persona := strings.ReplaceAll(entry.SystemPrompt, "{verbosity}", verbDesc)
+		prompt := persona
 		if id == "chips" {
 			// TrimRight bounds the separator on the prompt side: YAML `|`
 			// literal block scalars produce a trailing newline today, but
@@ -97,16 +145,33 @@ func Load(path string) (*Registry, error) {
 			// keeps the boundary stable regardless of YAML chomp style.
 			prompt = strings.TrimRight(prompt, "\n") + "\n\n" + chipsGitHubSkill
 		}
+
+		// Dual-path: render the Compose-based prompt for any crew with
+		// declared skills. The legacy id-gate above still wins for
+		// SystemPrompt() in this PR; the new prompt is reachable via
+		// ComposeOutput() so PR4's L2 tests can A/B both paths before
+		// the gate flip.
+		var composeOutput string
+		if len(entry.Skills) > 0 {
+			composed, err := skills.Compose(persona, entry.Skills, source)
+			if err != nil {
+				return nil, fmt.Errorf("crew %s: %w", id, err)
+			}
+			composeOutput = composed
+		}
+
 		registry.crew[id] = &BaseCrew{
-			id:           id,
-			name:         entry.Name,
-			role:         entry.Role,
-			model:        entry.Model,
-			verbosity:    entry.Verbosity,
-			systemPrompt: prompt,
-			announcesAs:  entry.Voice.AnnouncesAs,
-			voiceModel:   entry.Voice.Model,
-			tools:        entry.Tools,
+			id:            id,
+			name:          entry.Name,
+			role:          entry.Role,
+			model:         entry.Model,
+			verbosity:     entry.Verbosity,
+			systemPrompt:  prompt,
+			composeOutput: composeOutput,
+			announcesAs:   entry.Voice.AnnouncesAs,
+			voiceModel:    entry.Voice.Model,
+			tools:         entry.Tools,
+			skills:        entry.Skills,
 		}
 	}
 
@@ -138,6 +203,16 @@ func validateEntry(id string, e crewEntryYAML) error {
 	}
 	if e.Voice.AnnouncesAs == "" {
 		return fmt.Errorf("crew %s: voice.announces_as is required", id)
+	}
+	seen := make(map[string]bool, len(e.Skills))
+	for _, name := range e.Skills {
+		if name == "" {
+			return fmt.Errorf("crew %s: skill name must not be empty", id)
+		}
+		if seen[name] {
+			return fmt.Errorf("crew %s: duplicate skill %q", id, name)
+		}
+		seen[name] = true
 	}
 	return nil
 }
@@ -188,4 +263,95 @@ func (r *Registry) ValidateTools(checker ToolChecker) error {
 	}
 	sort.Strings(missing)
 	return fmt.Errorf("tool validation failed:\n  %s", strings.Join(missing, "\n  "))
+}
+
+// SkillChecker is the narrow interface used by ValidateSkills. It
+// covers exactly what ValidateSkills needs to verify Compose's
+// prerequisites at this caller layer: the universal addendum (required
+// when any crew has declared skills) and each declared skill's
+// SKILL.md. Profile is deliberately omitted since Compose treats
+// missing profiles as soft.
+//
+// skills.Source satisfies SkillChecker via duck typing, so production
+// callers pass the same source they used at LoadWithSource time. A
+// custom checker can also be supplied to compare a candidate source
+// against the loaded registry without re-running Load.
+type SkillChecker interface {
+	Universal() (skills.Doc, error)
+	Skill(name string) (skills.Doc, error)
+}
+
+// ValidateSkills checks that the supplied checker resolves the full set
+// of inputs Compose would need at registry load time:
+//
+//  1. The universal addendum (_universal.md), required when any crew
+//     has at least one declared skill — Compose's ErrUniversalRequired
+//     fires otherwise.
+//  2. Each declared skill's SKILL.md, per crew.
+//
+// Returns nil when every prerequisite resolves cleanly, or an
+// aggregated error formatted as a newline-indented bullet list of
+// per-crew issues (mirroring ValidateTools). Issue messages distinguish
+// between three failure modes so operators can diagnose without
+// chasing the source error:
+//
+//   - skills.ErrNotFound         → "unknown skill" (or "universal addendum missing")
+//   - skills.ErrInvalidSkillName → "invalid skill name" (regex mismatch)
+//   - any other error            → "validating skill: <err>" (I/O, etc.)
+//
+// LoadWithSource already fails fast on unresolvable skills via Compose's
+// wrapped ErrNotFound (or ErrUniversalRequired). ValidateSkills exists
+// primarily for pre-deployment consistency checks against a *candidate*
+// source — load with a known-good source first, then call ValidateSkills
+// against the candidate to list every issue without committing to a
+// reload.
+func (r *Registry) ValidateSkills(checker SkillChecker) error {
+	var issues []string
+	anySkills := false
+
+	// Per-crew pass: compute anySkills inline and walk each declared
+	// skill exactly once. Caching c.Skills() per crew avoids the
+	// double defensive-copy that Skills() incurs.
+	for id, c := range r.crew {
+		skillNames := c.Skills()
+		if len(skillNames) > 0 {
+			anySkills = true
+		}
+		for _, name := range skillNames {
+			_, err := checker.Skill(name)
+			if err == nil {
+				continue
+			}
+			switch {
+			case errors.Is(err, skills.ErrNotFound):
+				issues = append(issues, fmt.Sprintf("crew %s: unknown skill %q (not in skill source)", id, name))
+			case errors.Is(err, skills.ErrInvalidSkillName):
+				issues = append(issues, fmt.Sprintf("crew %s: invalid skill name %q (must match %s)", id, name, skills.SkillNameConstraint))
+			default:
+				issues = append(issues, fmt.Sprintf("crew %s: validating skill %q: %v", id, name, err))
+			}
+		}
+	}
+
+	// Universal is a prerequisite only when at least one crew has
+	// declared skills (matches Compose's behaviour: empty skills slice
+	// returns the persona unchanged without consulting Universal).
+	// Run after the per-skill pass — sort.Strings below normalises
+	// output order regardless of insertion order.
+	if anySkills {
+		if _, err := checker.Universal(); err != nil {
+			switch {
+			case errors.Is(err, skills.ErrNotFound):
+				issues = append(issues, `universal addendum missing ("_universal.md" not in skill source)`)
+			default:
+				issues = append(issues, fmt.Sprintf("validating universal addendum: %v", err))
+			}
+		}
+	}
+
+	if len(issues) == 0 {
+		return nil
+	}
+	sort.Strings(issues)
+	return fmt.Errorf("skill validation failed:\n  %s", strings.Join(issues, "\n  "))
 }

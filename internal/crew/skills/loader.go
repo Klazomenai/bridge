@@ -66,9 +66,18 @@ func isNilSource(s Source) bool {
 // `crew.yaml` is the only producer of skill names today.
 var ErrInvalidSkillName = errors.New("skills: invalid skill name")
 
+// SkillNameConstraint is the human-readable form of the skill-name
+// constraint, exported so downstream error messages (e.g. in
+// crew.ValidateSkills) reference a single authoritative source rather
+// than copy-pasting the literal pattern. The runtime regex below is
+// built from this constant so the two cannot drift.
+const SkillNameConstraint = "[a-z0-9][a-z0-9-]*"
+
 // skillNamePattern matches the dotfiles `claude/skills/<name>/` naming
-// convention: lowercase alphanumeric with optional dashes.
-var skillNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
+// convention: lowercase alphanumeric with optional dashes. Built from
+// SkillNameConstraint so the human-readable form and the regex stay
+// in lockstep.
+var skillNamePattern = regexp.MustCompile("^" + SkillNameConstraint + "$")
 
 // validateSkillName rejects names that would escape <Root>/ or break
 // the canonical relative path structure used by Doc.Path. Applied at
