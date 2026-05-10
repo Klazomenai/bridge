@@ -13,6 +13,7 @@ import (
 	anthropic "github.com/anthropics/anthropic-sdk-go"
 
 	"klazomenai/bridge/internal/tools"
+	"klazomenai/bridge/internal/tools/redact"
 )
 
 // auditLogger returns a logger that writes JSON-formatted records into
@@ -248,8 +249,8 @@ func TestAuditRecordRedactsSecrets(t *testing.T) {
 	if strings.Contains(out, secret) {
 		t.Errorf("raw secret leaked into audit log:\n%s", out)
 	}
-	if !strings.Contains(out, "[REDACTED]") {
-		t.Errorf("expected [REDACTED] sentinel in audit log:\n%s", out)
+	if !strings.Contains(out, redact.Sentinel) {
+		t.Errorf("expected %s sentinel in audit log:\n%s", redact.Sentinel, out)
 	}
 }
 
