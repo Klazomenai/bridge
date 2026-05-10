@@ -183,7 +183,7 @@ func TestExecuteWithSandbox_ErrorMessageTruncated(t *testing.T) {
 		t.Error("expected truncation of oversized error message")
 	}
 	if !strings.HasPrefix(result, "tool error: ") {
-		t.Errorf("expected 'tool error: ' prefix, got %q", result[:30])
+		t.Errorf("expected 'tool error: ' prefix, got %q", result)
 	}
 }
 
@@ -272,7 +272,10 @@ func TestAuditRecordTruncatesLargeArgv(t *testing.T) {
 
 	out := buf.String()
 	if !strings.Contains(out, "[truncated]") {
-		t.Errorf("expected [truncated] marker for oversized argv:\n%s", out[:200])
+		// Dump full buffer rather than slicing — a regression that
+		// returns short output must surface a clean failure, not a
+		// slice panic that masks the real cause.
+		t.Errorf("expected [truncated] marker for oversized argv:\n%s", out)
 	}
 }
 

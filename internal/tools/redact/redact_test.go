@@ -67,3 +67,37 @@ func TestRedactRepeatedOccurrencesAllReplaced(t *testing.T) {
 		t.Errorf("expected 3 sentinel substitutions, got %q", out)
 	}
 }
+
+func TestRedactOverlappingSecretsLongerWinsRegardlessOfOrder(t *testing.T) {
+	// Without internal length-descending sort, the caller-supplied
+	// order ["foo", "foobar"] would match "foo" first (inside
+	// "foobar") and leave "[REDACTED]bar" — a partial secret leak.
+	// The internal sort guarantees the longest match wins, so both
+	// caller orderings produce identical output.
+	cases := []struct {
+		name    string
+		secrets []string
+	}{
+		{"shorter first", []string{"foo", "foobar"}},
+		{"longer first", []string{"foobar", "foo"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			out := redact.Redact("foo and foobar are secrets", tc.secrets...)
+			if strings.Contains(out, "foobar") {
+				t.Errorf("partial redaction left foobar: %q", out)
+			}
+			if strings.Contains(out, "foo ") {
+				t.Errorf("standalone foo not redacted: %q", out)
+			}
+			// A residual "bar" implies foobar's tail leaked through
+			// partial redaction.
+			if strings.Contains(out, "bar") {
+				t.Errorf("residual bar suffix (partial leak): %q", out)
+			}
+			if strings.Count(out, redact.Sentinel) != 2 {
+				t.Errorf("expected 2 sentinel substitutions, got %q", out)
+			}
+		})
+	}
+}
