@@ -354,3 +354,69 @@ func (e errSource) Skill(name string) (skills.Doc, error) { return skills.Doc{},
 func (e errSource) Profile(name string) (skills.Doc, error) {
 	return skills.Doc{}, e.err
 }
+
+// ----------------------------------------------------------------------
+// FallbackSource happy-path coverage for Universal and Profile
+// (Skill is already exercised; Universal and Profile previously only
+// hit the validate-error branch via TestFallbackSourceRejectsNil...).
+// ----------------------------------------------------------------------
+
+func TestFallbackSourceUniversalFallsBackToSecondary(t *testing.T) {
+	// Primary path doesn't exist → ErrNotFound → falls through to
+	// EmbeddedSource which has _universal.md.
+	missing := filepath.Join(t.TempDir(), "does-not-exist")
+	src := skills.FallbackSource{
+		Primary:   skills.FilesystemSource{Root: missing},
+		Secondary: skills.EmbeddedSource{},
+	}
+	doc, err := src.Universal()
+	if err != nil {
+		t.Fatalf("Universal: %v", err)
+	}
+	const sentinel = "Operator Intent Required"
+	if !strings.Contains(doc.Content, sentinel) {
+		t.Errorf("fallback Universal missing sentinel %q", sentinel)
+	}
+}
+
+func TestFallbackSourceProfileFallsBackToSecondary(t *testing.T) {
+	// Primary path doesn't exist → ErrNotFound → falls through to
+	// EmbeddedSource which has github/profile.md.
+	missing := filepath.Join(t.TempDir(), "does-not-exist")
+	src := skills.FallbackSource{
+		Primary:   skills.FilesystemSource{Root: missing},
+		Secondary: skills.EmbeddedSource{},
+	}
+	doc, err := src.Profile("github")
+	if err != nil {
+		t.Fatalf("Profile: %v", err)
+	}
+	const sentinel = "must not be exposed as callable tools"
+	if !strings.Contains(doc.Content, sentinel) {
+		t.Errorf("fallback Profile missing sentinel %q", sentinel)
+	}
+}
+
+func TestFallbackSourceProfileUsesPrimaryWhenPresent(t *testing.T) {
+	// Primary has profile.md with distinctive content → must win
+	// without falling through. Mirrors TestFallbackSourceUsesFilesystemWhenPresent
+	// for the Profile method.
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "github"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "github", "profile.md"), []byte("OVERRIDE-PROFILE"), 0o600); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	src := skills.FallbackSource{
+		Primary:   skills.FilesystemSource{Root: dir},
+		Secondary: skills.EmbeddedSource{},
+	}
+	doc, err := src.Profile("github")
+	if err != nil {
+		t.Fatalf("Profile: %v", err)
+	}
+	if doc.Content != "OVERRIDE-PROFILE" {
+		t.Errorf("filesystem primary should win, got %q", doc.Content)
+	}
+}

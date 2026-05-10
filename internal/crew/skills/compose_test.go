@@ -196,3 +196,74 @@ func TestComposePreservesPersonaTrimsTrailingNewlines(t *testing.T) {
 		t.Errorf("persona trim/separator wrong, got:\n%s", out)
 	}
 }
+
+// ----------------------------------------------------------------------
+// Non-ErrNotFound error paths in Compose. Closes coverage on the two
+// "compose: load universal:" / "compose: load profile:" branches that
+// only fire when a Source returns something that ISN'T ErrNotFound
+// (e.g. a permission-denied I/O error from a future filesystem-backed
+// source).
+// ----------------------------------------------------------------------
+
+// configurableSource is a test-only Source whose three methods return
+// the configured errors. Lets tests inject non-ErrNotFound errors at
+// any of the three Source entry points without touching real I/O.
+type configurableSource struct {
+	universal skills.Doc
+	universalErr error
+	skill skills.Doc
+	skillErr error
+	profile skills.Doc
+	profileErr error
+}
+
+func (c configurableSource) Universal() (skills.Doc, error) {
+	return c.universal, c.universalErr
+}
+
+func (c configurableSource) Skill(_ string) (skills.Doc, error) {
+	return c.skill, c.skillErr
+}
+
+func (c configurableSource) Profile(_ string) (skills.Doc, error) {
+	return c.profile, c.profileErr
+}
+
+func TestComposeUniversalNonNotFoundErrorIsPropagated(t *testing.T) {
+	// A non-ErrNotFound error from Universal must propagate as a
+	// "compose: load universal: <err>" error, NOT as ErrUniversalRequired
+	// (which is reserved for the missing-doc case).
+	src := configurableSource{universalErr: errors.New("permission denied")}
+	_, err := skills.Compose("PERSONA", []string{"github"}, src)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if errors.Is(err, skills.ErrUniversalRequired) {
+		t.Error("non-ErrNotFound must NOT surface as ErrUniversalRequired")
+	}
+	if !strings.Contains(err.Error(), "compose: load universal") {
+		t.Errorf("expected compose: load universal prefix, got %v", err)
+	}
+}
+
+func TestComposeProfileNonNotFoundErrorIsPropagated(t *testing.T) {
+	// Universal + Skill succeed; Profile returns a non-ErrNotFound
+	// error. Compose must propagate as "compose: load profile <name>:"
+	// rather than silently skipping (skip-on-ErrNotFound is the soft
+	// path; other errors are hard).
+	src := configurableSource{
+		universal: skills.Doc{Content: "UNIV"},
+		skill:     skills.Doc{Content: "SKILL"},
+		profileErr: errors.New("permission denied"),
+	}
+	_, err := skills.Compose("PERSONA", []string{"github"}, src)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "compose: load profile") {
+		t.Errorf("expected compose: load profile prefix, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "github") {
+		t.Errorf("expected error to mention skill name github, got %v", err)
+	}
+}
