@@ -2,6 +2,7 @@ package crew
 
 import (
 	_ "embed"
+	"errors"
 	"fmt"
 	"os"
 	"sort"
@@ -44,10 +45,14 @@ type crewEntryYAML struct {
 	SystemPrompt string    `yaml:"system_prompt"`
 	Tools        []string  `yaml:"tools"`
 	// Skills is the optional list of skill names whose SKILL.md (and
-	// optional profile.md) get appended to the crew member's system
-	// prompt at registry-load time via the skills package's Compose
-	// function. Empty / omitted means the crew gets persona+verbosity
-	// only — current Maren/Crest/Bosun/Lookout behaviour.
+	// optional profile.md) drive the Compose-rendered prompt for this
+	// crew member at registry-load time via the skills package's
+	// Compose function. The result is stored on
+	// BaseCrew.composeOutput and reachable via Crew.ComposeOutput;
+	// SystemPrompt continues to return the id-gate output until the
+	// gate flip in #154. Empty / omitted means the crew gets
+	// persona+verbosity only — current Maren/Crest/Bosun/Lookout
+	// behaviour.
 	Skills []string `yaml:"skills"`
 }
 
@@ -264,26 +269,43 @@ type SkillChecker interface {
 }
 
 // ValidateSkills checks that every skill declared in crew.yaml resolves
-// against checker. Returns a sorted, comma-separated error listing all
-// missing skills, or nil when every entry resolves cleanly. Mirrors
-// ValidateTools.
+// against checker. Returns nil when every entry resolves cleanly, or
+// an aggregated error formatted as a newline-indented bullet list of
+// per-crew issues (mirroring ValidateTools). Issue messages distinguish
+// between three failure modes so operators can diagnose without
+// chasing the source error:
 //
-// LoadWithSource already fails fast on unresolvable skills via Compose's
-// wrapped ErrNotFound. ValidateSkills exists for pre-load checks and
-// for parity with ValidateTools — main.go can call both after Load to
-// surface inconsistencies independently of the load path.
+//   - skills.ErrNotFound       → "unknown skill" (skill name not in source)
+//   - skills.ErrInvalidSkillName → "invalid skill name" (regex mismatch)
+//   - any other error          → "validating skill: <error>" (I/O, etc.)
+//
+// LoadWithSource already fails fast on unresolvable skills via
+// Compose's wrapped ErrNotFound, so ValidateSkills exists primarily
+// for pre-load consistency checks (e.g. comparing a candidate dotfiles
+// ref against the currently-declared crew.yaml) and for parity with
+// ValidateTools — main.go can call both after Load to surface
+// inconsistencies independently of the load path.
 func (r *Registry) ValidateSkills(checker SkillChecker) error {
-	var missing []string
+	var issues []string
 	for id, c := range r.crew {
 		for _, name := range c.Skills() {
-			if _, err := checker.Skill(name); err != nil {
-				missing = append(missing, fmt.Sprintf("crew %s: unknown skill %q (not in skill source)", id, name))
+			_, err := checker.Skill(name)
+			if err == nil {
+				continue
+			}
+			switch {
+			case errors.Is(err, skills.ErrNotFound):
+				issues = append(issues, fmt.Sprintf("crew %s: unknown skill %q (not in skill source)", id, name))
+			case errors.Is(err, skills.ErrInvalidSkillName):
+				issues = append(issues, fmt.Sprintf("crew %s: invalid skill name %q (must match %s)", id, name, "[a-z0-9][a-z0-9-]*"))
+			default:
+				issues = append(issues, fmt.Sprintf("crew %s: validating skill %q: %v", id, name, err))
 			}
 		}
 	}
-	if len(missing) == 0 {
+	if len(issues) == 0 {
 		return nil
 	}
-	sort.Strings(missing)
-	return fmt.Errorf("skill validation failed:\n  %s", strings.Join(missing, "\n  "))
+	sort.Strings(issues)
+	return fmt.Errorf("skill validation failed:\n  %s", strings.Join(issues, "\n  "))
 }

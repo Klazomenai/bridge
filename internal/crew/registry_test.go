@@ -1065,6 +1065,77 @@ func TestValidateSkillsMissing(t *testing.T) {
 	}
 }
 
+// errorSource is a test-only Source whose Skill always returns the
+// configured error. Used by ValidateSkills tests to exercise the
+// per-error-class branches (ErrNotFound, ErrInvalidSkillName, other).
+type errorSource struct{ skillErr error }
+
+func (e errorSource) Universal() (skills.Doc, error) {
+	return skills.Doc{}, skills.ErrNotFound
+}
+
+func (e errorSource) Skill(_ string) (skills.Doc, error) {
+	return skills.Doc{}, e.skillErr
+}
+
+func (e errorSource) Profile(_ string) (skills.Doc, error) {
+	return skills.Doc{}, skills.ErrNotFound
+}
+
+func TestValidateSkillsDistinguishesErrorClasses(t *testing.T) {
+	// Build registry with chips:[github] declared; vary the checker's
+	// returned error to exercise each branch of the switch.
+	path := writeRegistry(t, yamlWithChipsSkill)
+	loadSrc := mapSource{
+		"_universal.md":     "UNIV",
+		"github/SKILL.md":   "SKILL",
+		"github/profile.md": "PROFILE",
+	}
+	r, err := crew.LoadWithSource(path, loadSrc)
+	if err != nil {
+		t.Fatalf("LoadWithSource: %v", err)
+	}
+
+	cases := []struct {
+		name        string
+		checkerErr  error
+		wantSubstr  string
+		wantNoSubstr string // optional: must NOT appear
+	}{
+		{
+			name:       "ErrNotFound → unknown skill",
+			checkerErr: skills.ErrNotFound,
+			wantSubstr: "unknown skill",
+		},
+		{
+			name:       "ErrInvalidSkillName → invalid skill name",
+			checkerErr: skills.ErrInvalidSkillName,
+			wantSubstr: "invalid skill name",
+			// must NOT misreport as "unknown" — that's the bug fix.
+			wantNoSubstr: "unknown skill",
+		},
+		{
+			name:       "other error → validating skill: <err>",
+			checkerErr: errors.New("permission denied"),
+			wantSubstr: "validating skill",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := r.ValidateSkills(errorSource{skillErr: tc.checkerErr})
+			if err == nil {
+				t.Fatal("expected error")
+			}
+			if !strings.Contains(err.Error(), tc.wantSubstr) {
+				t.Errorf("expected error to contain %q, got: %v", tc.wantSubstr, err)
+			}
+			if tc.wantNoSubstr != "" && strings.Contains(err.Error(), tc.wantNoSubstr) {
+				t.Errorf("error should NOT contain %q (misreport bug); got: %v", tc.wantNoSubstr, err)
+			}
+		})
+	}
+}
+
 func TestValidateSkillsNoSkillsDeclared(t *testing.T) {
 	// Empty checker — no skills resolvable, but no skills declared
 	// either. Mirrors TestValidateToolsNoToolsDeclared.
