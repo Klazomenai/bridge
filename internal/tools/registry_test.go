@@ -170,3 +170,43 @@ func TestNames(t *testing.T) {
 		t.Errorf("expected alpha and beta in names, got %v", names)
 	}
 }
+
+// mutatingTool implements MutationAware returning a configurable bool.
+// Used by TestIsMutation to exercise both branches of the helper.
+type mutatingTool struct {
+	stubTool
+	mutates bool
+}
+
+func (m *mutatingTool) Mutation() bool { return m.mutates }
+
+func TestIsMutation(t *testing.T) {
+	cases := []struct {
+		name string
+		tool tools.ToolDefinition
+		want bool
+	}{
+		{
+			name: "tool implementing MutationAware true",
+			tool: &mutatingTool{stubTool: stubTool{name: "writer"}, mutates: true},
+			want: true,
+		},
+		{
+			name: "tool implementing MutationAware false",
+			tool: &mutatingTool{stubTool: stubTool{name: "reader"}, mutates: false},
+			want: false,
+		},
+		{
+			name: "tool NOT implementing MutationAware (conservative default)",
+			tool: &stubTool{name: "legacy"},
+			want: false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tools.IsMutation(tc.tool); got != tc.want {
+				t.Errorf("IsMutation(%T) = %v, want %v", tc.tool, got, tc.want)
+			}
+		})
+	}
+}
