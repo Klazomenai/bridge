@@ -336,7 +336,7 @@ func (r *Registry) ValidateSkills(checker SkillChecker) error {
 			case errors.Is(err, skills.ErrNotFound):
 				issues = append(issues, fmt.Sprintf("crew %s: unknown skill %q (not in skill source)", id, name))
 			case errors.Is(err, skills.ErrInvalidSkillName):
-				issues = append(issues, fmt.Sprintf("crew %s: invalid skill name %q (must match %s)", id, name, "[a-z0-9][a-z0-9-]*"))
+				issues = append(issues, fmt.Sprintf("crew %s: invalid skill name %q (must match %s)", id, name, skills.SkillNameConstraint))
 			default:
 				issues = append(issues, fmt.Sprintf("crew %s: validating skill %q: %v", id, name, err))
 			}
