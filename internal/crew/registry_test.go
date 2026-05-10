@@ -663,10 +663,10 @@ func TestRealCrewYAMLLoadsAndValidates(t *testing.T) {
 	}
 }
 
-// TestChipsSystemPromptContainsGitHubSkill verifies that the embedded github
-// skill body is appended to Chips' system prompt and that key rules survive
-// the build pipeline. Loads the real config/crew.yaml so a divergence between
-// the YAML prompt and the embedded skill is caught.
+// TestChipsSystemPromptContainsGitHubSkill verifies that the github skill
+// body is composed into Chips' system prompt and that key rules survive
+// the build pipeline. Loads the real config/crew.yaml so a divergence
+// between the YAML prompt and the embedded skill is caught.
 func TestChipsSystemPromptContainsGitHubSkill(t *testing.T) {
 	const configPath = "../../config/crew.yaml"
 	if _, err := os.Stat(configPath); err != nil {
@@ -685,32 +685,24 @@ func TestChipsSystemPromptContainsGitHubSkill(t *testing.T) {
 
 	prompt := chips.SystemPrompt()
 
-	// Persona prompt itself must still be there (gate did not replace it).
+	// Persona prompt itself must still be there.
 	if !strings.Contains(prompt, "Carpenter") {
-		t.Error("chips persona prompt missing — embedding overwrote rather than appended")
+		t.Error("chips persona prompt missing — Compose may have replaced rather than prepended")
 	}
 
-	// Key skill rules that must survive build-time embedding. Each entry
-	// is a load-bearing rule; failure means the skill body was truncated,
-	// the gating logic dropped chips, or the source skill drifted away
-	// from the operator's standing instructions.
-	//
-	// TODO(#148): migrate to compose_test.go after Source/Compose lands.
-	// Once the skills loader rewrite is in, this assertion table moves
-	// into the new compose_test.go alongside the universal+profile
-	// composition tests. The fragments here describe the OLD vendored
-	// monolithic skill body (post-PR144); the new layout will assert
-	// against the universal+skill+profile concatenation. Keep the
-	// fragments as a regression net during the migration.
+	// Key skill rules that must survive Compose. Each entry is a
+	// load-bearing rule; failure means the skill body was truncated,
+	// the source resolution dropped chips, or the source skill drifted
+	// away from the operator's standing instructions.
 	requiredRules := []struct {
-		name    string
+		name     string
 		fragment string
 	}{
 		{"signed commits", "--gpg-sign"},
 		{"refs not closes", "Refs #N"},
 		{"closes forbidden", "NEVER `Closes #N`"},
 		{"draft default", "ALWAYS create PRs as draft"},
-		{"never push main", "NEVER push to `main`"},
+		{"never push main", `NEVER push to "main"`},
 		{"never amend", "NEVER amend commits"},
 		{"no auto-merge", "NEVER run `gh pr merge`"},
 		{"conventional commits", "Conventional commits format"},
@@ -724,18 +716,9 @@ func TestChipsSystemPromptContainsGitHubSkill(t *testing.T) {
 	}
 
 	// Pin the persona ↔ skill boundary so a future edit to crew.yaml's
-	// scalar style (e.g. `|` → `|-`, which strips the trailing newline)
-	// or a skill-file rewrite that drops the leading header is caught
-	// at CI rather than only by visual inspection of the rendered prompt.
-	//
-	// TODO(#148): migrate to compose_test.go after Source/Compose lands.
-	// Under the new loader the boundary marker still applies — Compose
-	// emits `\n\n## <Skill> Workflow Rules\n` as the persona↔skill
-	// separator. The literal in this assertion will need updating to
-	// match Compose's emitted heading; the assertion intent (boundary
-	// is stable across YAML chomp style + skill-file edits) carries
-	// forward unchanged.
-	const boundary = "\n\n## Git + GitHub Workflow Rules"
+	// scalar style or a skill-file rewrite that drops the leading
+	// heading is caught at CI rather than only by visual inspection.
+	const boundary = "\n\n## Github Workflow Rules\n"
 	if !strings.Contains(prompt, boundary) {
 		t.Errorf("chips prompt missing persona↔skill boundary %q — separator may have collapsed", boundary)
 	}
@@ -859,13 +842,11 @@ crew:
 }
 
 // ----------------------------------------------------------------------
-// Dual-path Source/Compose wiring (#153)
+// Source/Compose wiring (#153)
 //
 // LoadWithSource invokes skills.Compose for any crew with a non-empty
-// `skills:` list and stores the rendered prompt on BaseCrew alongside
-// the (still-winning) id-gate output. The legacy SystemPrompt() keeps
-// returning the id-gate value; ComposeOutput() exposes the new value
-// for PR4's L2 enforcement tests to A/B both paths.
+// `skills:` list and stores the rendered output as the crew's system
+// prompt. Crew without skills get persona+verbosity only.
 // ----------------------------------------------------------------------
 
 const yamlWithChipsSkill = `
@@ -883,68 +864,60 @@ crew:
     system_prompt: "You are Chips. Respond in {verbosity}"
 `
 
-func TestComposeOutputContainsUniversalSentinels(t *testing.T) {
+func TestSystemPromptContainsUniversalSentinels(t *testing.T) {
 	path := writeRegistry(t, yamlWithChipsSkill)
 	r, err := crew.Load(path)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	out := r.Get("chips").ComposeOutput()
+	out := r.Get("chips").SystemPrompt()
 	for _, sentinel := range []string{
-		"Operator Universal Rules",     // boundary marker
-		"Github Workflow Rules",        // boundary marker (titlecase)
-		"Github Profile Addendum",      // boundary marker (titlecase)
-		"Operator Intent Required",     // universal addendum content
-		"Conventional commits format",  // SKILL.md content
+		"Operator Universal Rules",    // boundary marker
+		"Github Workflow Rules",       // boundary marker (titlecase)
+		"Github Profile Addendum",     // boundary marker (titlecase)
+		"Operator Intent Required",    // universal addendum content
+		"Conventional commits format", // SKILL.md content
 	} {
 		if !strings.Contains(out, sentinel) {
-			t.Errorf("ComposeOutput missing sentinel %q\nfull output:\n%s", sentinel, out)
+			t.Errorf("SystemPrompt missing sentinel %q\nfull output:\n%s", sentinel, out)
 		}
 	}
 }
 
-func TestComposeOutputBeginsWithPersona(t *testing.T) {
+func TestSystemPromptBeginsWithPersona(t *testing.T) {
 	path := writeRegistry(t, yamlWithChipsSkill)
 	r, err := crew.Load(path)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	out := r.Get("chips").ComposeOutput()
+	out := r.Get("chips").SystemPrompt()
 	const wantPrefix = "You are Chips. Respond in Answer in a full paragraph"
 	if !strings.HasPrefix(out, wantPrefix) {
-		t.Errorf("ComposeOutput must begin with rendered persona, got:\n%s", out)
+		t.Errorf("SystemPrompt must begin with rendered persona, got:\n%s", out)
 	}
 }
 
-func TestNonSkillsCrewHasEmptyComposeOutput(t *testing.T) {
+func TestNonSkillsCrewSystemPromptHasNoComposeMarkers(t *testing.T) {
 	// validYAML (top of file) has no skills declared on any crew.
+	// SystemPrompt should be persona+verbosity only — no Compose-emitted
+	// section headings from universal/skill addenda.
 	path := writeRegistry(t, validYAML)
 	r, err := crew.Load(path)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
+	composeMarkers := []string{
+		"## Operator Universal Rules",
+		"## Github Workflow Rules",
+		"## Github Profile Addendum",
+	}
 	for _, id := range []string{"maren", "crest", "bosun", "lookout", "chips"} {
-		if got := r.Get(id).ComposeOutput(); got != "" {
-			t.Errorf("crew %s: expected empty ComposeOutput, got %d bytes", id, len(got))
+		prompt := r.Get(id).SystemPrompt()
+		for _, marker := range composeMarkers {
+			if strings.Contains(prompt, marker) {
+				t.Errorf("crew %s: SystemPrompt unexpectedly contains Compose marker %q (no skills declared)", id, marker)
+			}
 		}
-	}
-}
-
-func TestSystemPromptUnchangedByComposePath(t *testing.T) {
-	// PR3 contract: id-gate still wins for SystemPrompt(); ComposeOutput
-	// is the new dual-path. The legacy assertion in
-	// TestChipsSystemPromptContainsGitHubSkill uses sentinel
-	// "Copilot Review Workflow" from the vendored skills/github.md
-	// (id-gate path), NOT from the embedded fixtures (Compose path).
-	// Until #154 flips the gate, both paths render independently.
-	path := writeRegistry(t, yamlWithChipsSkill)
-	r, err := crew.Load(path)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	prompt := r.Get("chips").SystemPrompt()
-	if !strings.Contains(prompt, "Copilot Review Workflow") {
-		t.Error("SystemPrompt missing Copilot Review Workflow sentinel — id-gate may have been removed prematurely")
 	}
 }
 
@@ -999,7 +972,7 @@ func TestLoadWithSourceFailsOnUnknownSkill(t *testing.T) {
 
 func TestLoadWithSourceUsesInjectedSource(t *testing.T) {
 	// Hermetic: injected source provides distinctive sentinels that
-	// EmbeddedSource doesn't. ComposeOutput must contain them, proving
+	// EmbeddedSource doesn't. SystemPrompt must contain them, proving
 	// LoadWithSource routed through the injected source.
 	path := writeRegistry(t, yamlWithChipsSkill)
 	src := mapSource{
@@ -1011,14 +984,14 @@ func TestLoadWithSourceUsesInjectedSource(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadWithSource: %v", err)
 	}
-	out := r.Get("chips").ComposeOutput()
+	out := r.Get("chips").SystemPrompt()
 	for _, want := range []string{
 		"INJECTED-UNIV-SENTINEL",
 		"INJECTED-SKILL-SENTINEL",
 		"INJECTED-PROFILE-SENTINEL",
 	} {
 		if !strings.Contains(out, want) {
-			t.Errorf("ComposeOutput missing injected sentinel %q", want)
+			t.Errorf("SystemPrompt missing injected sentinel %q", want)
 		}
 	}
 }

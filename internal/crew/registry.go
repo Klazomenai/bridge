@@ -116,28 +116,25 @@ func LoadWithSource(path string, source skills.Source) (*Registry, error) {
 		}
 		persona := strings.ReplaceAll(entry.SystemPrompt, "{verbosity}", verbDesc)
 		systemPrompt := persona
-		var composeOutput string
 		if len(entry.Skills) > 0 {
 			composed, err := skills.Compose(persona, entry.Skills, source)
 			if err != nil {
 				return nil, fmt.Errorf("crew %s: %w", id, err)
 			}
 			systemPrompt = composed
-			composeOutput = composed
 		}
 
 		registry.crew[id] = &BaseCrew{
-			id:            id,
-			name:          entry.Name,
-			role:          entry.Role,
-			model:         entry.Model,
-			verbosity:     entry.Verbosity,
-			systemPrompt:  systemPrompt,
-			composeOutput: composeOutput,
-			announcesAs:   entry.Voice.AnnouncesAs,
-			voiceModel:    entry.Voice.Model,
-			tools:         entry.Tools,
-			skills:        entry.Skills,
+			id:           id,
+			name:         entry.Name,
+			role:         entry.Role,
+			model:        entry.Model,
+			verbosity:    entry.Verbosity,
+			systemPrompt: systemPrompt,
+			announcesAs:  entry.Voice.AnnouncesAs,
+			voiceModel:   entry.Voice.Model,
+			tools:        entry.Tools,
+			skills:       entry.Skills,
 		}
 	}
 
