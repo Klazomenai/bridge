@@ -1,12 +1,14 @@
 package crew_test
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"klazomenai/bridge/internal/crew"
+	"klazomenai/bridge/internal/crew/skills"
 )
 
 const validYAML = `
@@ -279,7 +281,7 @@ crew:
 `,
 		},
 		{
-			name: "uppercase crew ID",
+			name: "uppercase default_crew",
 			yaml: `
 default_crew: Maren
 crew:
@@ -293,6 +295,34 @@ crew:
       announces_as: "Maren:"
     system_prompt: "prompt"
 `,
+		},
+		{
+			// default_crew lowercase passes the early check at the top of
+			// LoadWithSource; the uppercase MAP KEY then hits the loop's
+			// id != strings.ToLower(id) check inside the for-each. This
+			// is a different code path than the "uppercase default_crew"
+			// case above (which short-circuits on the prior check).
+			name: "uppercase crew map key",
+			yaml: `
+default_crew: maren
+crew:
+  Maren:
+    name: "Maren"
+    role: "Shipwright"
+    model: "claude-sonnet-4-6"
+    verbosity: dispatch
+    voice:
+      model: "x.onnx"
+      announces_as: "Maren:"
+    system_prompt: "prompt"
+`,
+		},
+		{
+			// Hits the yaml.Unmarshal error path (vs. the post-parse
+			// validation paths above). Unclosed flow sequence is a clean
+			// YAML syntax error that the parser cannot recover from.
+			name: "malformed yaml syntax",
+			yaml: "default_crew: [unclosed",
 		},
 	}
 	for _, tc := range cases {
@@ -825,5 +855,243 @@ crew:
 	}
 	if !strings.Contains(err.Error(), "must not be empty") {
 		t.Errorf("expected must-not-be-empty in error, got: %v", err)
+	}
+}
+
+// ----------------------------------------------------------------------
+// Dual-path Source/Compose wiring (#153)
+//
+// LoadWithSource invokes skills.Compose for any crew with a non-empty
+// `skills:` list and stores the rendered prompt on BaseCrew alongside
+// the (still-winning) id-gate output. The legacy SystemPrompt() keeps
+// returning the id-gate value; ComposeOutput() exposes the new value
+// for PR4's L2 enforcement tests to A/B both paths.
+// ----------------------------------------------------------------------
+
+const yamlWithChipsSkill = `
+default_crew: chips
+crew:
+  chips:
+    name: "Chips"
+    role: "The Carpenter"
+    model: "claude-sonnet-4-6"
+    verbosity: log-entry
+    skills: [github]
+    voice:
+      model: TBD
+      announces_as: "Chips:"
+    system_prompt: "You are Chips. Respond in {verbosity}"
+`
+
+func TestComposeOutputContainsUniversalSentinels(t *testing.T) {
+	path := writeRegistry(t, yamlWithChipsSkill)
+	r, err := crew.Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	out := r.Get("chips").ComposeOutput()
+	for _, sentinel := range []string{
+		"Operator Universal Rules",     // boundary marker
+		"Github Workflow Rules",        // boundary marker (titlecase)
+		"Github Profile Addendum",      // boundary marker (titlecase)
+		"Operator Intent Required",     // universal addendum content
+		"Conventional commits format",  // SKILL.md content
+	} {
+		if !strings.Contains(out, sentinel) {
+			t.Errorf("ComposeOutput missing sentinel %q\nfull output:\n%s", sentinel, out)
+		}
+	}
+}
+
+func TestComposeOutputBeginsWithPersona(t *testing.T) {
+	path := writeRegistry(t, yamlWithChipsSkill)
+	r, err := crew.Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	out := r.Get("chips").ComposeOutput()
+	const wantPrefix = "You are Chips. Respond in Answer in a full paragraph"
+	if !strings.HasPrefix(out, wantPrefix) {
+		t.Errorf("ComposeOutput must begin with rendered persona, got:\n%s", out)
+	}
+}
+
+func TestNonSkillsCrewHasEmptyComposeOutput(t *testing.T) {
+	// validYAML (top of file) has no skills declared on any crew.
+	path := writeRegistry(t, validYAML)
+	r, err := crew.Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	for _, id := range []string{"maren", "crest", "bosun", "lookout", "chips"} {
+		if got := r.Get(id).ComposeOutput(); got != "" {
+			t.Errorf("crew %s: expected empty ComposeOutput, got %d bytes", id, len(got))
+		}
+	}
+}
+
+func TestSystemPromptUnchangedByComposePath(t *testing.T) {
+	// PR3 contract: id-gate still wins for SystemPrompt(); ComposeOutput
+	// is the new dual-path. The legacy assertion in
+	// TestChipsSystemPromptContainsGitHubSkill uses sentinel
+	// "Copilot Review Workflow" from the vendored skills/github.md
+	// (id-gate path), NOT from the embedded fixtures (Compose path).
+	// Until #154 flips the gate, both paths render independently.
+	path := writeRegistry(t, yamlWithChipsSkill)
+	r, err := crew.Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	prompt := r.Get("chips").SystemPrompt()
+	if !strings.Contains(prompt, "Copilot Review Workflow") {
+		t.Error("SystemPrompt missing Copilot Review Workflow sentinel — id-gate may have been removed prematurely")
+	}
+}
+
+// ----------------------------------------------------------------------
+// LoadWithSource — test injection via mapSource
+// ----------------------------------------------------------------------
+
+// mapSource is a test-only Source backed by an in-memory map keyed by
+// canonical relative path (slash-separated, matching Doc.Path contract).
+// Lets LoadWithSource tests inject precise content without depending on
+// the embedded fixtures.
+type mapSource map[string]string
+
+func (m mapSource) Universal() (skills.Doc, error) {
+	if c, ok := m["_universal.md"]; ok {
+		return skills.Doc{Path: "_universal.md", Content: c}, nil
+	}
+	return skills.Doc{}, skills.ErrNotFound
+}
+
+func (m mapSource) Skill(name string) (skills.Doc, error) {
+	key := name + "/SKILL.md"
+	if c, ok := m[key]; ok {
+		return skills.Doc{Path: key, Content: c}, nil
+	}
+	return skills.Doc{}, skills.ErrNotFound
+}
+
+func (m mapSource) Profile(name string) (skills.Doc, error) {
+	key := name + "/profile.md"
+	if c, ok := m[key]; ok {
+		return skills.Doc{Path: key, Content: c}, nil
+	}
+	return skills.Doc{}, skills.ErrNotFound
+}
+
+func TestLoadWithSourceFailsOnUnknownSkill(t *testing.T) {
+	// Empty source → Compose wraps ErrNotFound for the missing skill →
+	// LoadWithSource propagates with the crew id in the error.
+	path := writeRegistry(t, yamlWithChipsSkill)
+	_, err := crew.LoadWithSource(path, mapSource{})
+	if err == nil {
+		t.Fatal("expected error for unknown skill")
+	}
+	if !errors.Is(err, skills.ErrNotFound) {
+		t.Errorf("expected wrapped ErrNotFound, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "chips") {
+		t.Errorf("expected error to mention crew id chips, got %v", err)
+	}
+}
+
+func TestLoadWithSourceUsesInjectedSource(t *testing.T) {
+	// Hermetic: injected source provides distinctive sentinels that
+	// EmbeddedSource doesn't. ComposeOutput must contain them, proving
+	// LoadWithSource routed through the injected source.
+	path := writeRegistry(t, yamlWithChipsSkill)
+	src := mapSource{
+		"_universal.md":     "INJECTED-UNIV-SENTINEL",
+		"github/SKILL.md":   "INJECTED-SKILL-SENTINEL",
+		"github/profile.md": "INJECTED-PROFILE-SENTINEL",
+	}
+	r, err := crew.LoadWithSource(path, src)
+	if err != nil {
+		t.Fatalf("LoadWithSource: %v", err)
+	}
+	out := r.Get("chips").ComposeOutput()
+	for _, want := range []string{
+		"INJECTED-UNIV-SENTINEL",
+		"INJECTED-SKILL-SENTINEL",
+		"INJECTED-PROFILE-SENTINEL",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("ComposeOutput missing injected sentinel %q", want)
+		}
+	}
+}
+
+// ----------------------------------------------------------------------
+// ValidateSkills (mirrors ValidateTools)
+// ----------------------------------------------------------------------
+
+func TestValidateSkillsAllPresent(t *testing.T) {
+	path := writeRegistry(t, yamlWithChipsSkill)
+	r, err := crew.Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if err := r.ValidateSkills(skills.EmbeddedSource{}); err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+}
+
+func TestValidateSkillsMissing(t *testing.T) {
+	// Build the registry via LoadWithSource with a source that DOES
+	// have github (so Load succeeds), then ValidateSkills against an
+	// empty source — proving the validator surfaces missing skills
+	// regardless of which source was used at Load time.
+	path := writeRegistry(t, yamlWithChipsSkill)
+	loadSrc := mapSource{
+		"_universal.md":     "UNIV",
+		"github/SKILL.md":   "SKILL",
+		"github/profile.md": "PROFILE",
+	}
+	r, err := crew.LoadWithSource(path, loadSrc)
+	if err != nil {
+		t.Fatalf("LoadWithSource: %v", err)
+	}
+	err = r.ValidateSkills(mapSource{})
+	if err == nil {
+		t.Fatal("expected validation error for missing skill")
+	}
+	if !strings.Contains(err.Error(), "github") {
+		t.Errorf("expected error to mention skill name github, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "chips") {
+		t.Errorf("expected error to mention crew id chips, got: %v", err)
+	}
+}
+
+func TestValidateSkillsNoSkillsDeclared(t *testing.T) {
+	// Empty checker — no skills resolvable, but no skills declared
+	// either. Mirrors TestValidateToolsNoToolsDeclared.
+	path := writeRegistry(t, validYAML)
+	r, err := crew.Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if err := r.ValidateSkills(mapSource{}); err != nil {
+		t.Errorf("expected no error when no skills declared, got: %v", err)
+	}
+}
+
+func TestEmbeddedSourceContainsAllSkillsDeclaredInRealCrewYAML(t *testing.T) {
+	// Pin the contract that every skill declared in the real
+	// config/crew.yaml resolves via the EmbeddedSource — equivalent
+	// in spirit to validating production tool registry against the
+	// production tool list.
+	configPath := "../../config/crew.yaml"
+	if _, err := os.Stat(configPath); err != nil {
+		t.Skipf("real config/crew.yaml not present (running outside repo?): %v", err)
+	}
+	r, err := crew.Load(configPath)
+	if err != nil {
+		t.Fatalf("Load real crew.yaml: %v", err)
+	}
+	if err := r.ValidateSkills(skills.EmbeddedSource{}); err != nil {
+		t.Errorf("ValidateSkills against EmbeddedSource: %v", err)
 	}
 }

@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"klazomenai/bridge/internal/crew/skills"
 )
 
 // chipsGitHubSkill is the curated github skill body, vendored from the operator's
@@ -60,8 +62,35 @@ type Registry struct {
 	crew        map[string]Crew
 }
 
-// Load parses the crew YAML at path and returns a Registry.
+// Load parses the crew YAML at path and returns a Registry. Skills
+// declared on crew entries (via the `skills: []` field) are composed
+// against an EmbeddedSource by default — production callers wanting
+// to layer a filesystem override on top should call LoadWithSource
+// with a FallbackSource.
 func Load(path string) (*Registry, error) {
+	return LoadWithSource(path, skills.EmbeddedSource{})
+}
+
+// LoadWithSource is Load with a caller-provided skills.Source. Used by
+// tests (injecting a MapSource for hermetic Compose-output assertions)
+// and by future callers (e.g. main.go) that want to layer a filesystem
+// override over the embedded fallback.
+//
+// For each crew entry with a non-empty `skills:` list, this function
+// invokes skills.Compose against the supplied source and stores the
+// rendered prompt on BaseCrew.composeOutput, reachable via
+// BaseCrew.ComposeOutput. The legacy `if id == "chips"` gate remains
+// the source of truth for SystemPrompt() in this sub-PR — the gate
+// flip happens in #154 (PR4). This dual-path arrangement gives PR4's
+// L2 enforcement tests an A/B affordance: legacy output through
+// SystemPrompt(), new output through ComposeOutput(), both renderable
+// without changing crew.yaml.
+//
+// A declared skill that fails to resolve (Compose returns an error)
+// causes LoadWithSource to fail. Callers must supply a source that
+// covers every skill name declared in crew.yaml, or use ValidateSkills
+// up front to list missing skills before constructing the registry.
+func LoadWithSource(path string, source skills.Source) (*Registry, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("reading crew registry %s: %w", path, err)
@@ -103,17 +132,34 @@ func Load(path string) (*Registry, error) {
 			// keeps the boundary stable regardless of YAML chomp style.
 			prompt = strings.TrimRight(prompt, "\n") + "\n\n" + chipsGitHubSkill
 		}
+
+		// Dual-path: render the Compose-based prompt for any crew with
+		// declared skills. The legacy id-gate above still wins for
+		// SystemPrompt() in this PR; the new prompt is reachable via
+		// ComposeOutput() so PR4's L2 tests can A/B both paths before
+		// the gate flip.
+		var composeOutput string
+		if len(entry.Skills) > 0 {
+			persona := strings.ReplaceAll(entry.SystemPrompt, "{verbosity}", verbDesc)
+			composed, err := skills.Compose(persona, entry.Skills, source)
+			if err != nil {
+				return nil, fmt.Errorf("crew %s: %w", id, err)
+			}
+			composeOutput = composed
+		}
+
 		registry.crew[id] = &BaseCrew{
-			id:           id,
-			name:         entry.Name,
-			role:         entry.Role,
-			model:        entry.Model,
-			verbosity:    entry.Verbosity,
-			systemPrompt: prompt,
-			announcesAs:  entry.Voice.AnnouncesAs,
-			voiceModel:   entry.Voice.Model,
-			tools:        entry.Tools,
-			skills:       entry.Skills,
+			id:            id,
+			name:          entry.Name,
+			role:          entry.Role,
+			model:         entry.Model,
+			verbosity:     entry.Verbosity,
+			systemPrompt:  prompt,
+			composeOutput: composeOutput,
+			announcesAs:   entry.Voice.AnnouncesAs,
+			voiceModel:    entry.Voice.Model,
+			tools:         entry.Tools,
+			skills:        entry.Skills,
 		}
 	}
 
@@ -205,4 +251,39 @@ func (r *Registry) ValidateTools(checker ToolChecker) error {
 	}
 	sort.Strings(missing)
 	return fmt.Errorf("tool validation failed:\n  %s", strings.Join(missing, "\n  "))
+}
+
+// SkillChecker is the narrow interface used by ValidateSkills. The
+// skills.Source interface satisfies it (Skill is one of its three
+// methods), so production callers pass the same source they used at
+// LoadWithSource time. A custom checker can also be supplied for
+// pre-load consistency checks (e.g. comparing a candidate dotfiles
+// ref against the currently-declared crew.yaml).
+type SkillChecker interface {
+	Skill(name string) (skills.Doc, error)
+}
+
+// ValidateSkills checks that every skill declared in crew.yaml resolves
+// against checker. Returns a sorted, comma-separated error listing all
+// missing skills, or nil when every entry resolves cleanly. Mirrors
+// ValidateTools.
+//
+// LoadWithSource already fails fast on unresolvable skills via Compose's
+// wrapped ErrNotFound. ValidateSkills exists for pre-load checks and
+// for parity with ValidateTools — main.go can call both after Load to
+// surface inconsistencies independently of the load path.
+func (r *Registry) ValidateSkills(checker SkillChecker) error {
+	var missing []string
+	for id, c := range r.crew {
+		for _, name := range c.Skills() {
+			if _, err := checker.Skill(name); err != nil {
+				missing = append(missing, fmt.Sprintf("crew %s: unknown skill %q (not in skill source)", id, name))
+			}
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	sort.Strings(missing)
+	return fmt.Errorf("skill validation failed:\n  %s", strings.Join(missing, "\n  "))
 }
