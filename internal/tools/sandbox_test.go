@@ -1,9 +1,11 @@
 package tools_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
@@ -11,7 +13,17 @@ import (
 	anthropic "github.com/anthropics/anthropic-sdk-go"
 
 	"klazomenai/bridge/internal/tools"
+	"klazomenai/bridge/internal/tools/redact"
 )
+
+// auditLogger returns a logger that writes JSON-formatted records into
+// the returned buffer. Used by audit-record tests to capture and assert
+// against the structured fields ExecuteWithSandbox emits.
+func auditLogger() (*slog.Logger, *bytes.Buffer) {
+	buf := &bytes.Buffer{}
+	logger := slog.New(slog.NewJSONHandler(buf, nil))
+	return logger, buf
+}
 
 // testTool is a configurable tool for sandbox tests.
 type testTool struct {
@@ -171,6 +183,121 @@ func TestExecuteWithSandbox_ErrorMessageTruncated(t *testing.T) {
 		t.Error("expected truncation of oversized error message")
 	}
 	if !strings.HasPrefix(result, "tool error: ") {
-		t.Errorf("expected 'tool error: ' prefix, got %q", result[:30])
+		t.Errorf("expected 'tool error: ' prefix, got %q", result)
+	}
+}
+
+// ----------------------------------------------------------------------
+// Audit record — covers the slog.Info("audit: tool invoked", ...) line
+// ExecuteWithSandbox emits before tool execution, including:
+//   - structured-field shape (tool/crew/room/mutation/argv_redacted)
+//   - per-call Logger injection via SandboxMeta.Logger
+//   - secret redaction via SandboxMeta.Secrets + redact.Redact
+//   - rune-safe truncation of argv_redacted at MaxOutputLen
+// ----------------------------------------------------------------------
+
+func TestAuditRecordEmittedOnInvocation(t *testing.T) {
+	logger, buf := auditLogger()
+	tool := &testTool{name: "ok", execFn: func(_ context.Context, _ json.RawMessage) (string, error) {
+		return "result", nil
+	}}
+	meta := tools.SandboxMeta{
+		CrewID:   "chips",
+		RoomID:   "!room:localhost",
+		ToolName: "test_tool",
+		Mutation: false,
+		Logger:   logger,
+	}
+	input := json.RawMessage(`{"org":"klazomenai","repo":"bridge"}`)
+
+	tools.ExecuteWithSandbox(context.Background(), tool, input, tools.DefaultSandboxConfig(), meta)
+
+	out := buf.String()
+	for _, want := range []string{
+		`"msg":"audit: tool invoked"`,
+		`"tool":"test_tool"`,
+		`"crew":"chips"`,
+		`"room":"!room:localhost"`,
+		`"mutation":false`,
+		`"argv_redacted":"{\"org\":\"klazomenai\",\"repo\":\"bridge\"}"`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("audit log missing field %q\nfull buffer:\n%s", want, out)
+		}
+	}
+}
+
+func TestAuditRecordRedactsSecrets(t *testing.T) {
+	logger, buf := auditLogger()
+	tool := &testTool{name: "ok", execFn: func(_ context.Context, _ json.RawMessage) (string, error) {
+		return "ok", nil
+	}}
+	const secret = "ghp_supersecret_token_value"
+	meta := tools.SandboxMeta{
+		CrewID:   "chips",
+		RoomID:   "!room:localhost",
+		ToolName: "test_tool",
+		Logger:   logger,
+		Secrets:  []string{secret},
+	}
+	// Input contains the literal secret embedded in a JSON string.
+	input := json.RawMessage(fmt.Sprintf(`{"token":%q}`, secret))
+
+	tools.ExecuteWithSandbox(context.Background(), tool, input, tools.DefaultSandboxConfig(), meta)
+
+	out := buf.String()
+	if strings.Contains(out, secret) {
+		t.Errorf("raw secret leaked into audit log:\n%s", out)
+	}
+	if !strings.Contains(out, redact.Sentinel) {
+		t.Errorf("expected %s sentinel in audit log:\n%s", redact.Sentinel, out)
+	}
+}
+
+func TestAuditRecordTruncatesLargeArgv(t *testing.T) {
+	logger, buf := auditLogger()
+	tool := &testTool{name: "ok", execFn: func(_ context.Context, _ json.RawMessage) (string, error) {
+		return "ok", nil
+	}}
+	cfg := tools.SandboxConfig{Timeout: 30 * time.Second, MaxOutputLen: 100}
+	meta := tools.SandboxMeta{
+		CrewID:   "chips",
+		RoomID:   "!room:localhost",
+		ToolName: "test_tool",
+		Logger:   logger,
+	}
+	input := json.RawMessage(strings.Repeat("x", 5000))
+
+	tools.ExecuteWithSandbox(context.Background(), tool, input, cfg, meta)
+
+	out := buf.String()
+	if !strings.Contains(out, "[truncated]") {
+		// Dump full buffer rather than slicing — a regression that
+		// returns short output must surface a clean failure, not a
+		// slice panic that masks the real cause.
+		t.Errorf("expected [truncated] marker for oversized argv:\n%s", out)
+	}
+}
+
+func TestAuditRecordUsesDefaultLoggerWhenMetaLoggerNil(t *testing.T) {
+	// Without injection, ExecuteWithSandbox falls back to slog.Default().
+	// We cannot intercept slog.Default() output portably, but we CAN
+	// assert that a nil Logger field doesn't panic and the call still
+	// completes — pinning the contract that Logger is optional.
+	tool := &testTool{name: "ok", execFn: func(_ context.Context, _ json.RawMessage) (string, error) {
+		return "ok", nil
+	}}
+	meta := tools.SandboxMeta{
+		CrewID:   "chips",
+		RoomID:   "!room:localhost",
+		ToolName: "test_tool",
+		Logger:   nil, // explicit nil — falls back to slog.Default
+	}
+	result, isError := tools.ExecuteWithSandbox(context.Background(), tool, nil, tools.DefaultSandboxConfig(), meta)
+	if isError {
+		t.Errorf("unexpected error: %s", result)
+	}
+	if result != "ok" {
+		t.Errorf("expected result=ok, got %q", result)
 	}
 }

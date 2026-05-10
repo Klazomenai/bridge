@@ -26,6 +26,26 @@ type ToolDefinition interface {
 	Execute(ctx context.Context, input json.RawMessage) (string, error)
 }
 
+// MutationAware is an optional interface a tool may implement to declare
+// whether its invocation mutates external state. The audit log emits a
+// `mutation` field for every invocation; tools that do NOT implement this
+// interface are conservatively treated as read-only (mutation=false).
+//
+// Write tools (e.g. a future gh_issue_close) should implement Mutation()
+// returning true so the audit log surfaces an irreversible action.
+type MutationAware interface {
+	Mutation() bool
+}
+
+// IsMutation reports whether tool t represents a state-mutating operation.
+// Returns false when t does not implement MutationAware.
+func IsMutation(t ToolDefinition) bool {
+	if m, ok := t.(MutationAware); ok {
+		return m.Mutation()
+	}
+	return false
+}
+
 // Registry holds all registered tools and provides lookup by name and crew.
 type Registry struct {
 	mu    sync.RWMutex
