@@ -17,20 +17,17 @@ type Crew interface {
 	// for crew with no skills declared.
 	Skills() []string
 	// ComposeOutput returns the skills.Compose-rendered prompt for crew
-	// with declared skills. Empty for crew without skills. Until the
-	// id-gate flip in #154, this is informational — SystemPrompt() is
-	// the runtime source of truth. After the flip, ComposeOutput will
-	// either be the source of truth or be removed entirely.
+	// with declared skills. Empty for crew without skills. Identical to
+	// SystemPrompt() for crew-with-skills; transitional accessor pending
+	// removal as test call sites migrate to SystemPrompt.
 	ComposeOutput() string
 }
 
 // BaseCrew holds the parsed crew member configuration.
 //
-// composeOutput holds the skills.Compose-rendered prompt for crew with
-// declared skills, populated by LoadWithSource alongside the
-// id-gate-driven systemPrompt. Until the gate flip in #154 the field
-// is informational; ComposeOutput exposes it so PR4's L2 tests can
-// A/B both paths.
+// composeOutput mirrors the Compose-rendered prompt for crew with
+// declared skills (empty otherwise); equal to systemPrompt for that
+// case. Transitional field pending removal.
 type BaseCrew struct {
 	id            string
 	name          string
