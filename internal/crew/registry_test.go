@@ -1042,7 +1042,9 @@ func TestValidateSkillsMissing(t *testing.T) {
 	// Build the registry via LoadWithSource with a source that DOES
 	// have github (so Load succeeds), then ValidateSkills against an
 	// empty source — proving the validator surfaces missing skills
-	// regardless of which source was used at Load time.
+	// regardless of which source was used at Load time. An empty
+	// source also has no universal addendum, so we expect both the
+	// per-skill issue AND the universal-missing issue.
 	path := writeRegistry(t, yamlWithChipsSkill)
 	loadSrc := mapSource{
 		"_universal.md":     "UNIV",
@@ -1063,15 +1065,127 @@ func TestValidateSkillsMissing(t *testing.T) {
 	if !strings.Contains(err.Error(), "chips") {
 		t.Errorf("expected error to mention crew id chips, got: %v", err)
 	}
+	if !strings.Contains(err.Error(), "universal addendum missing") {
+		t.Errorf("expected error to mention missing universal addendum, got: %v", err)
+	}
 }
 
-// errorSource is a test-only Source whose Skill always returns the
-// configured error. Used by ValidateSkills tests to exercise the
-// per-error-class branches (ErrNotFound, ErrInvalidSkillName, other).
-type errorSource struct{ skillErr error }
+func TestValidateSkillsRequiresUniversalWhenSkillsDeclared(t *testing.T) {
+	// Source has the github SKILL.md but no _universal.md. With at
+	// least one crew declaring skills, ValidateSkills must surface a
+	// universal-missing issue even though every per-skill name resolves.
+	// (Compose's ErrUniversalRequired is the runtime equivalent of
+	// this; ValidateSkills lets operators catch it before runtime.)
+	path := writeRegistry(t, yamlWithChipsSkill)
+	loadSrc := mapSource{
+		"_universal.md":     "UNIV",
+		"github/SKILL.md":   "SKILL",
+		"github/profile.md": "PROFILE",
+	}
+	r, err := crew.LoadWithSource(path, loadSrc)
+	if err != nil {
+		t.Fatalf("LoadWithSource: %v", err)
+	}
+	candidate := mapSource{
+		// no _universal.md — the candidate would silently pass a
+		// skills-only validator, which is the bug we're guarding.
+		"github/SKILL.md":   "SKILL",
+		"github/profile.md": "PROFILE",
+	}
+	err = r.ValidateSkills(candidate)
+	if err == nil {
+		t.Fatal("expected validation error for missing universal")
+	}
+	if !strings.Contains(err.Error(), "universal addendum missing") {
+		t.Errorf("expected universal-missing message, got: %v", err)
+	}
+	// The per-skill check must NOT fire (github resolves) — pin that
+	// the per-skill and universal paths are independent.
+	if strings.Contains(err.Error(), "unknown skill") {
+		t.Errorf("github resolves; should not report unknown skill: %v", err)
+	}
+}
+
+func TestValidateSkillsSkipsUniversalCheckWhenNoSkillsDeclared(t *testing.T) {
+	// validYAML has no skills declared on any crew, so universal is
+	// not a prerequisite. A checker with no Universal must NOT trigger
+	// a universal-missing issue.
+	path := writeRegistry(t, validYAML)
+	r, err := crew.Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if err := r.ValidateSkills(mapSource{}); err != nil {
+		t.Errorf("expected no error when no skills declared, got: %v", err)
+	}
+}
+
+func TestValidateSkillsUniversalErrorClasses(t *testing.T) {
+	// Mirror the per-skill class test for the universal path. Skill
+	// returns nil so per-skill issues don't pollute; only the
+	// universal branch triggers.
+	path := writeRegistry(t, yamlWithChipsSkill)
+	loadSrc := mapSource{
+		"_universal.md":     "UNIV",
+		"github/SKILL.md":   "SKILL",
+		"github/profile.md": "PROFILE",
+	}
+	r, err := crew.LoadWithSource(path, loadSrc)
+	if err != nil {
+		t.Fatalf("LoadWithSource: %v", err)
+	}
+
+	cases := []struct {
+		name         string
+		universalErr error
+		wantSubstr   string
+	}{
+		{
+			name:         "ErrNotFound → universal addendum missing",
+			universalErr: skills.ErrNotFound,
+			wantSubstr:   "universal addendum missing",
+		},
+		{
+			name:         "other error → validating universal addendum: <err>",
+			universalErr: errors.New("permission denied"),
+			wantSubstr:   "validating universal addendum",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// skillErr=nil so per-skill branch never fires; only the
+			// universal branch can surface an issue.
+			src := errorSource{universalErr: tc.universalErr, skillErr: nil}
+			// With skillErr=nil, errorSource.Skill returns (zero Doc, nil) —
+			// ValidateSkills treats that as "skill resolved".
+			err := r.ValidateSkills(src)
+			if err == nil {
+				t.Fatal("expected error")
+			}
+			if !strings.Contains(err.Error(), tc.wantSubstr) {
+				t.Errorf("expected error to contain %q, got: %v", tc.wantSubstr, err)
+			}
+		})
+	}
+}
+
+// errorSource is a test-only Source with configurable per-method
+// errors. Used by ValidateSkills tests to exercise the
+// per-error-class branches (ErrNotFound, ErrInvalidSkillName, other)
+// for both Universal and Skill independently. Universal succeeds by
+// default so per-skill tests aren't polluted with a spurious
+// universal-missing issue; tests that want to exercise the universal
+// check set universalErr explicitly.
+type errorSource struct {
+	skillErr     error
+	universalErr error
+}
 
 func (e errorSource) Universal() (skills.Doc, error) {
-	return skills.Doc{}, skills.ErrNotFound
+	if e.universalErr != nil {
+		return skills.Doc{}, e.universalErr
+	}
+	return skills.Doc{Path: "_universal.md", Content: "UNIV"}, nil
 }
 
 func (e errorSource) Skill(_ string) (skills.Doc, error) {

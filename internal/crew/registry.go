@@ -91,10 +91,14 @@ func Load(path string) (*Registry, error) {
 // SystemPrompt(), new output through ComposeOutput(), both renderable
 // without changing crew.yaml.
 //
-// A declared skill that fails to resolve (Compose returns an error)
-// causes LoadWithSource to fail. Callers must supply a source that
-// covers every skill name declared in crew.yaml, or use ValidateSkills
-// up front to list missing skills before constructing the registry.
+// LoadWithSource fails fast on any skill that does not resolve via the
+// supplied source: Compose's wrapped ErrNotFound (or ErrUniversalRequired
+// for a missing universal) propagates out. To pre-flight a candidate
+// source against an already-loaded registry — e.g. comparing an
+// updated dotfiles ref against the currently-deployed crew.yaml before
+// rolling out — first load with a known-good source (typically the
+// default EmbeddedSource via Load), then call Registry.ValidateSkills
+// against the candidate.
 func LoadWithSource(path string, source skills.Source) (*Registry, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -258,35 +262,70 @@ func (r *Registry) ValidateTools(checker ToolChecker) error {
 	return fmt.Errorf("tool validation failed:\n  %s", strings.Join(missing, "\n  "))
 }
 
-// SkillChecker is the narrow interface used by ValidateSkills. The
-// skills.Source interface satisfies it (Skill is one of its three
-// methods), so production callers pass the same source they used at
-// LoadWithSource time. A custom checker can also be supplied for
-// pre-load consistency checks (e.g. comparing a candidate dotfiles
-// ref against the currently-declared crew.yaml).
+// SkillChecker is the narrow interface used by ValidateSkills. It
+// covers exactly what ValidateSkills needs to verify Compose's
+// prerequisites at this caller layer: the universal addendum (required
+// when any crew has declared skills) and each declared skill's
+// SKILL.md. Profile is deliberately omitted since Compose treats
+// missing profiles as soft.
+//
+// skills.Source satisfies SkillChecker via duck typing, so production
+// callers pass the same source they used at LoadWithSource time. A
+// custom checker can also be supplied to compare a candidate source
+// against the loaded registry without re-running Load.
 type SkillChecker interface {
+	Universal() (skills.Doc, error)
 	Skill(name string) (skills.Doc, error)
 }
 
-// ValidateSkills checks that every skill declared in crew.yaml resolves
-// against checker. Returns nil when every entry resolves cleanly, or
-// an aggregated error formatted as a newline-indented bullet list of
+// ValidateSkills checks that the supplied checker resolves the full set
+// of inputs Compose would need at registry load time:
+//
+//  1. The universal addendum (_universal.md), required when any crew
+//     has at least one declared skill — Compose's ErrUniversalRequired
+//     fires otherwise.
+//  2. Each declared skill's SKILL.md, per crew.
+//
+// Returns nil when every prerequisite resolves cleanly, or an
+// aggregated error formatted as a newline-indented bullet list of
 // per-crew issues (mirroring ValidateTools). Issue messages distinguish
 // between three failure modes so operators can diagnose without
 // chasing the source error:
 //
-//   - skills.ErrNotFound       → "unknown skill" (skill name not in source)
+//   - skills.ErrNotFound         → "unknown skill" (or "universal addendum missing")
 //   - skills.ErrInvalidSkillName → "invalid skill name" (regex mismatch)
-//   - any other error          → "validating skill: <error>" (I/O, etc.)
+//   - any other error            → "validating skill: <err>" (I/O, etc.)
 //
-// LoadWithSource already fails fast on unresolvable skills via
-// Compose's wrapped ErrNotFound, so ValidateSkills exists primarily
-// for pre-load consistency checks (e.g. comparing a candidate dotfiles
-// ref against the currently-declared crew.yaml) and for parity with
-// ValidateTools — main.go can call both after Load to surface
-// inconsistencies independently of the load path.
+// LoadWithSource already fails fast on unresolvable skills via Compose's
+// wrapped ErrNotFound (or ErrUniversalRequired). ValidateSkills exists
+// primarily for pre-deployment consistency checks against a *candidate*
+// source — load with a known-good source first, then call ValidateSkills
+// against the candidate to list every issue without committing to a
+// reload.
 func (r *Registry) ValidateSkills(checker SkillChecker) error {
 	var issues []string
+
+	// Universal is a prerequisite only when at least one crew has
+	// declared skills (matches Compose's behaviour: empty skills slice
+	// returns the persona unchanged without consulting Universal).
+	anySkills := false
+	for _, c := range r.crew {
+		if len(c.Skills()) > 0 {
+			anySkills = true
+			break
+		}
+	}
+	if anySkills {
+		if _, err := checker.Universal(); err != nil {
+			switch {
+			case errors.Is(err, skills.ErrNotFound):
+				issues = append(issues, `universal addendum missing ("_universal.md" not in skill source)`)
+			default:
+				issues = append(issues, fmt.Sprintf("validating universal addendum: %v", err))
+			}
+		}
+	}
+
 	for id, c := range r.crew {
 		for _, name := range c.Skills() {
 			_, err := checker.Skill(name)
