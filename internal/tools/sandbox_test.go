@@ -301,3 +301,36 @@ func TestAuditRecordUsesDefaultLoggerWhenMetaLoggerNil(t *testing.T) {
 		t.Errorf("expected result=ok, got %q", result)
 	}
 }
+
+// TestExecuteWithSandbox_ByteOverCapButRuneUnder exercises the multi-byte
+// UTF-8 edge in truncateForLog where len(s) > maxRunes (byte length
+// exceeds the cap) BUT len(runes) <= maxRunes (rune count within cap).
+// In that case the function must return the input UNTRUNCATED — the
+// rune-fast-path-then-fallback pattern relies on this branch existing
+// so genuinely-short multi-byte strings aren't falsely flagged as
+// oversized just because they happen to be encoded in 3-byte runes.
+//
+// Without this test the second `if len(runes) <= maxRunes { return s }`
+// branch in truncateForLog is unreached (the existing "utf8 rune
+// boundary" subtest exercises the truncation path with both byte AND
+// rune counts over the cap, missing this edge).
+func TestExecuteWithSandbox_ByteOverCapButRuneUnder(t *testing.T) {
+	// 4 runes of 日 = 12 bytes, 4 runes. With MaxOutputLen=10:
+	// byte length (12) > cap (10), rune count (4) <= cap (10).
+	tool := &testTool{name: "utf8edge", execFn: func(_ context.Context, _ json.RawMessage) (string, error) {
+		return strings.Repeat("日", 4), nil
+	}}
+	cfg := tools.SandboxConfig{Timeout: 30 * time.Second, MaxOutputLen: 10}
+
+	result, isError := tools.ExecuteWithSandbox(context.Background(), tool, nil, cfg, testMeta())
+	if isError {
+		t.Fatal("unexpected error")
+	}
+	if strings.Contains(result, "[truncated]") {
+		t.Errorf("output with byte>cap but rune<=cap should NOT be truncated, got %q", result)
+	}
+	expected := strings.Repeat("日", 4)
+	if result != expected {
+		t.Errorf("expected %q, got %q", expected, result)
+	}
+}
