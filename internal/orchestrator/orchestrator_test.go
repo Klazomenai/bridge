@@ -19,6 +19,7 @@ import (
 	"klazomenai/bridge/internal/orchestrator"
 	"klazomenai/bridge/internal/testutil"
 	"klazomenai/bridge/internal/tools"
+	chipstools "klazomenai/bridge/internal/tools/chips"
 )
 
 const testCrewYAML = `
@@ -1104,5 +1105,183 @@ func TestHandle400MidLoopNoRecovery(t *testing.T) {
 	// Two calls: iteration 0 (success) + iteration 1 (400, no retry).
 	if len(mock.calls) != 2 {
 		t.Errorf("expected 2 API calls, got %d", len(mock.calls))
+	}
+}
+
+// =====================================================================
+// L2 enforcement roster (#154)
+//
+// Two of the four L2 tests for the #148 epic live here. Companion tests:
+//   - internal/crew/registry_test.go::TestChipsSystemPromptContainsOperatorIntentRule
+//     — Compose output carries the Operator Intent rule and worked example
+//   - internal/tools/chips/chips_test.go::TestProductionChipsRegistryHasNoMergeTools
+//     — gh_pr_merge / gh_pr_ready are not registered
+// =====================================================================
+
+const chipsTestCrewYAML = `
+default_crew: chips
+crew:
+  chips:
+    name: "Chips"
+    role: "The Carpenter"
+    model: "claude-sonnet-4-6"
+    verbosity: log-entry
+    tools: [delegate_to_crew, gh_pr_list, test_mutation]
+    voice:
+      model: TBD
+      announces_as: "Chips:"
+    system_prompt: "You are Chips. Respond in {verbosity}"
+`
+
+// mutationTool is a test-only ToolDefinition that opts into MutationAware
+// so the orchestrator marks it via SandboxMeta.Mutation. Used by the
+// pending-confirmation exception test below.
+type mutationTool struct {
+	executed bool
+}
+
+func (m *mutationTool) Name() string        { return "test_mutation" }
+func (m *mutationTool) Description() string { return "test-only mutating tool" }
+func (m *mutationTool) InputSchema() anthropic.ToolInputSchemaParam {
+	return anthropic.ToolInputSchemaParam{Properties: map[string]any{}}
+}
+func (m *mutationTool) Execute(_ context.Context, _ json.RawMessage) (string, error) {
+	m.executed = true
+	return "mutation executed", nil
+}
+func (m *mutationTool) Mutation() bool { return true }
+
+// newChipsOrchestrator loads a chips-defaulted test crew and wires the
+// orchestrator with the supplied mock-response sequence.
+func newChipsOrchestrator(t *testing.T, toolReg *tools.Registry, responses ...*anthropic.Message) (*orchestrator.Orchestrator, *mockClaudeClient) {
+	t.Helper()
+	f := filepath.Join(t.TempDir(), "crew.yaml")
+	if err := os.WriteFile(f, []byte(chipsTestCrewYAML), 0o600); err != nil {
+		t.Fatalf("write crew yaml: %v", err)
+	}
+	reg, err := crew.Load(f)
+	if err != nil {
+		t.Fatalf("load crew: %v", err)
+	}
+	mgr := ctxbuf.NewManager(ctxbuf.DefaultMaxTurns)
+	mock := &mockClaudeClient{responses: responses}
+	return orchestrator.NewWithClient(reg, mgr, toolReg, mock), mock
+}
+
+// TestChipsRefusesNonAllowlistedRepo drives the allowlist refusal path
+// for chips's gh_pr_list against an off-allowlist repo. The repo
+// allowlist check fires before exec, so the tool returns an error which
+// the orchestrator wraps as a tool_result with is_error=true and the
+// "is not in the allowed list" substring. Exec must not be called.
+func TestChipsRefusesNonAllowlistedRepo(t *testing.T) {
+	defer testutil.VerifyNone(t)
+	repoAllow := chipstools.ParseRepoAllowlist("klazomenai/bridge")
+	stubExec := func(_ context.Context, _ string, _ ...string) ([]byte, error) {
+		t.Fatal("stub exec called — allowlist check should have refused before exec")
+		return nil, nil
+	}
+	toolReg := tools.NewRegistry()
+	toolReg.Register(&tools.DelegateTool{})
+	toolReg.Register(chipstools.NewGHPRListTool(stubExec, repoAllow, "test-token"))
+
+	o, mock := newChipsOrchestrator(t, toolReg,
+		toolUseResponse("tu_1", "gh_pr_list", json.RawMessage(`{"org":"microsoft","repo":"vscode"}`)),
+		textResponse("microsoft/vscode is not in our allowlist, Captain."),
+	)
+
+	if _, err := o.Handle(t.Context(), "!room:server", "list open PRs on microsoft/vscode", "chips"); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	if len(mock.calls) != 2 {
+		t.Fatalf("expected 2 API calls (initial + tool-loop continuation), got %d", len(mock.calls))
+	}
+
+	secondCall := mock.calls[1]
+	lastMsg := secondCall.Messages[len(secondCall.Messages)-1]
+	tr := lastMsg.Content[0].OfToolResult
+	if tr == nil {
+		t.Fatal("expected tool_result in second call's last message")
+	}
+	if !tr.IsError.Value {
+		t.Error("expected tool_result is_error=true on allowlist refusal")
+	}
+	resultText := tr.Content[0].OfText.Text
+	if !strings.Contains(resultText, "is not in the allowed list") {
+		t.Errorf("tool_result missing allowlist-refusal substring, got: %q", resultText)
+	}
+}
+
+// TestPendingConfirmationExceptionAccepts drives the pending-confirmation
+// exception path from _universal.md: operator proposes a mutation, the
+// orchestrator surfaces a confirm prompt with no tool_use, the operator
+// says "yes", and the mutation tool then fires without the orchestrator
+// refusing on the bare "yes" turn. Both operator turns share the same
+// room and therefore the same context buffer, so the prior proposal is
+// visible to Claude on the confirmation turn.
+//
+// Caveat: the mock returns exactly what the test scripts. This proves
+// the multi-turn machinery (context buffer + tool-loop) threads the
+// confirmation through to tool execution, not that Claude itself would
+// refuse the bare "yes" without the prior turn. The prompt-content
+// guarantee (chips sees the Operator Intent rule + worked example) is
+// covered in the companion crew test.
+func TestPendingConfirmationExceptionAccepts(t *testing.T) {
+	defer testutil.VerifyNone(t)
+	mt := &mutationTool{}
+	toolReg := tools.NewRegistry()
+	toolReg.Register(&tools.DelegateTool{})
+	toolReg.Register(mt)
+
+	o, mock := newChipsOrchestrator(t, toolReg,
+		// Turn 1: chips proposes the action without committing.
+		textResponse("That's a high-risk mutation — confirm close of issue #99? (yes/no)"),
+		// Turn 2 (after "yes"): chips fires the mutation tool.
+		toolUseResponse("tu_1", "test_mutation", json.RawMessage(`{}`)),
+		// Turn 2 follow-up after the tool_result.
+		textResponse("Issue #99 closed."),
+	)
+
+	const room = "!confirm:server"
+
+	// Turn 1: proposal.
+	resp, err := o.Handle(t.Context(), room, "close issue #99", "chips")
+	if err != nil {
+		t.Fatalf("turn 1 Handle: %v", err)
+	}
+	if len(resp) != 1 || !strings.Contains(strings.ToLower(resp[0].Text), "confirm") {
+		t.Fatalf("turn 1: expected confirm prompt, got %+v", resp)
+	}
+	if mt.executed {
+		t.Error("turn 1: mutation tool executed before confirmation")
+	}
+
+	// Turn 2: confirmation.
+	resp, err = o.Handle(t.Context(), room, "yes", "chips")
+	if err != nil {
+		t.Fatalf("turn 2 Handle: %v", err)
+	}
+	if !mt.executed {
+		t.Error("turn 2: mutation tool was not executed after confirmation")
+	}
+	if len(resp) != 1 || resp[0].Text != "Issue #99 closed." {
+		t.Fatalf("turn 2: expected close-confirmation text, got %+v", resp)
+	}
+
+	// Verify the tool_result on the post-tool turn was NOT marked as
+	// an error — the orchestrator threaded the confirmation turn
+	// through to tool execution rather than refusing.
+	lastCall := mock.calls[len(mock.calls)-1]
+	lastMsg := lastCall.Messages[len(lastCall.Messages)-1]
+	tr := lastMsg.Content[0].OfToolResult
+	if tr == nil {
+		t.Fatal("expected tool_result in final mock call")
+	}
+	if tr.IsError.Value {
+		t.Errorf("tool_result unexpectedly marked is_error=true: %+v", tr.Content)
+	}
+
+	// Sanity: 3 mock calls total — turn 1 (1) + turn 2 (initial + post-tool, 2).
+	if got := len(mock.calls); got != 3 {
+		t.Errorf("expected 3 total mock calls (turn 1 + turn 2 with tool loop), got %d", got)
 	}
 }

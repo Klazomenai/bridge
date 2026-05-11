@@ -724,6 +724,37 @@ func TestChipsSystemPromptContainsGitHubSkill(t *testing.T) {
 	}
 }
 
+// TestChipsSystemPromptContainsOperatorIntentRule is one of the four L2
+// enforcement tests filed against the #148 epic. Asserts that the
+// universal addendum's "Operator Intent Required" section is composed
+// into Chips' system prompt so chips sees the rule at every turn —
+// mutations must reflect intent in the operator's most recent message,
+// and the pending-confirmation exception is documented with its worked
+// example ("close issue #99" → "Confirm?" → "yes").
+//
+// Loads the real config/crew.yaml so a divergence between the YAML's
+// declared skills and the embedded universal addendum is caught.
+func TestChipsSystemPromptContainsOperatorIntentRule(t *testing.T) {
+	const configPath = "../../config/crew.yaml"
+	if _, err := os.Stat(configPath); err != nil {
+		t.Skipf("config/crew.yaml not found at %s (running outside repo?)", configPath)
+	}
+	r, err := crew.Load(configPath)
+	if err != nil {
+		t.Fatalf("Load real crew.yaml: %v", err)
+	}
+	prompt := r.Get("chips").SystemPrompt()
+	for _, fragment := range []string{
+		"Write Operations — Operator Intent Required",
+		"Pending-confirmation exception",
+		"close issue #99", // worked example anchoring the rule
+	} {
+		if !strings.Contains(prompt, fragment) {
+			t.Errorf("chips prompt missing operator-intent fragment %q", fragment)
+		}
+	}
+}
+
 // TestNonChipsCrewLackGitHubSkill verifies the embedding is gated to chips —
 // Maren / Crest / Bosun / Lookout must not inherit GitHub workflow rules
 // they have no tools to act on.
