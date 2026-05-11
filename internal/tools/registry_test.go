@@ -8,6 +8,7 @@ import (
 	anthropic "github.com/anthropics/anthropic-sdk-go"
 
 	"klazomenai/bridge/internal/tools"
+	chipstools "klazomenai/bridge/internal/tools/chips"
 )
 
 // stubTool is a minimal ToolDefinition for testing.
@@ -208,5 +209,44 @@ func TestIsMutation(t *testing.T) {
 				t.Errorf("IsMutation(%T) = %v, want %v", tc.tool, got, tc.want)
 			}
 		})
+	}
+}
+
+// TestGhPrMergeNotRegistered is one of the L2 enforcement tests on #154's AC.
+// Builds the production chips registry via the real RegisterChipsTools
+// entrypoint and asserts the high-risk mutations gh_pr_merge and
+// gh_pr_ready are not registered. Those tools are reserved as human
+// decisions per the operator's standing rule; _universal.md requires
+// they not be callable at all rather than gated at execute time (which
+// would be bypassable via prompt injection).
+//
+// Lives in internal/tools/registry_test.go per AC; uses the external
+// tools_test package so importing chipstools forms only a one-way
+// dependency (tools_test → chipstools → tools), no cycle.
+//
+// Companion tests in other packages cover the prompt-content rule
+// (internal/crew) and runtime allowlist refusal (internal/orchestrator).
+func TestGhPrMergeNotRegistered(t *testing.T) {
+	reg := tools.NewRegistry()
+	chipstools.RegisterChipsTools(
+		reg,
+		chipstools.DefaultExecFn(),
+		chipstools.ParseRepoAllowlist("klazomenai/bridge"),
+		"test-token",
+	)
+	for _, forbidden := range []string{"gh_pr_merge", "gh_pr_ready"} {
+		if reg.Has(forbidden) {
+			t.Errorf("production chips registry has %q — high-risk mutation must not be registered", forbidden)
+		}
+	}
+	// Anchor the roster's positive shape so a future deletion of
+	// RegisterChipsTools wouldn't silently turn this into a vacuous test.
+	for _, expected := range []string{
+		"gh_issue_list", "gh_issue_view", "gh_pr_list",
+		"gh_pr_view", "gh_pr_checks", "git_log", "git_diff",
+	} {
+		if !reg.Has(expected) {
+			t.Errorf("production chips registry missing expected tool %q", expected)
+		}
 	}
 }

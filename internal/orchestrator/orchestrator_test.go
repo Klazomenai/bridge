@@ -1,10 +1,12 @@
 package orchestrator_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1111,11 +1113,16 @@ func TestHandle400MidLoopNoRecovery(t *testing.T) {
 // =====================================================================
 // L2 enforcement roster (#154)
 //
-// Two of the four L2 tests for the #148 epic live here. Companion tests:
-//   - internal/crew/registry_test.go::TestChipsSystemPromptContainsOperatorIntentRule
-//     — Compose output carries the Operator Intent rule and worked example
-//   - internal/tools/chips/chips_test.go::TestProductionChipsRegistryHasNoMergeTools
-//     — gh_pr_merge / gh_pr_ready are not registered
+// Tests in this file cover the orchestrator-layer L2 enforcement
+// assertions on #154's AC: allowlist refusal, mutation-without-operator-
+// intent (prompt-content), and pending-confirmation exception (with
+// audit-log emission). Companion tests live in:
+//   - internal/crew/registry_test.go (universal-rules + github-profile +
+//     non-chips-lack-universal prompt-content)
+//   - internal/tools/registry_test.go::TestGhPrMergeNotRegistered
+//     (gh_pr_merge / gh_pr_ready not in the production chips registry)
+//   - internal/tools/sandbox_test.go (audit-log emission + token
+//     redaction on the mutation:true path)
 // =====================================================================
 
 const chipsTestCrewYAML = `
@@ -1211,6 +1218,41 @@ func TestChipsRefusesNonAllowlistedRepo(t *testing.T) {
 	}
 }
 
+// TestChipsRefusesMutationWithoutOperatorIntent verifies that the universal
+// addendum's operator-intent rule is composed into Chips's system prompt.
+// Loads the real config/crew.yaml so a divergence between the YAML's
+// declared skills and the embedded universal addendum is caught.
+//
+// AC sentinel from #154 is "Every write operation must reflect intent in
+// the operator's most recent message". The sentence is hard-wrapped
+// inside the "Write Operations — Operator Intent Required" section of
+// _universal.md (the wrap currently falls between "recent" and
+// "message"); the test asserts on the single-line prefix to be robust
+// against future re-wraps that preserve semantic meaning.
+//
+// Lives in the orchestrator package per #154 AC. Functionally a
+// prompt-content test; companions in internal/crew/registry_test.go
+// cover the universal-rules + github-profile-rules sentinels.
+func TestChipsRefusesMutationWithoutOperatorIntent(t *testing.T) {
+	const configPath = "../../config/crew.yaml"
+	if _, err := os.Stat(configPath); err != nil {
+		t.Skipf("config/crew.yaml not found at %s (running outside repo?)", configPath)
+	}
+	reg, err := crew.Load(configPath)
+	if err != nil {
+		t.Fatalf("Load real crew.yaml: %v", err)
+	}
+	chips := reg.Get("chips")
+	if chips == nil {
+		t.Fatal("chips not found in real crew.yaml")
+	}
+	prompt := chips.SystemPrompt()
+	const sentinel = "Every write operation must reflect intent in the operator's most recent"
+	if !strings.Contains(prompt, sentinel) {
+		t.Errorf("chips SystemPrompt missing operator-intent sentinel %q", sentinel)
+	}
+}
+
 // TestPendingConfirmationExceptionAccepts drives the pending-confirmation
 // exception path from _universal.md: operator proposes a mutation, the
 // orchestrator surfaces a confirm prompt with no tool_use, the operator
@@ -1225,8 +1267,24 @@ func TestChipsRefusesNonAllowlistedRepo(t *testing.T) {
 // refuse the bare "yes" without the prior turn. The prompt-content
 // guarantee (chips sees the Operator Intent rule + worked example) is
 // covered in the companion crew test.
+//
+// Audit-log assertion: the test redirects slog.Default to a buffer so
+// the "audit: tool invoked" line emitted by sandbox.go (when the
+// mutation tool fires) is captured. SandboxMeta.Logger is unset by
+// the orchestrator's executeToolCalls path; ExecuteWithSandbox falls
+// back to slog.Default(), so swapping the default routes audit lines
+// here. NOT t.Parallel-safe — bridge orchestrator tests are not
+// parallel today; if that changes, refactor to a SandboxConfig.Logger
+// field.
 func TestPendingConfirmationExceptionAccepts(t *testing.T) {
 	defer testutil.VerifyNone(t)
+
+	// Capture audit-log output for the duration of this test.
+	var buf bytes.Buffer
+	prevDefault := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prevDefault) })
+
 	mt := &mutationTool{}
 	toolReg := tools.NewRegistry()
 	toolReg.Register(&tools.DelegateTool{})
@@ -1283,5 +1341,22 @@ func TestPendingConfirmationExceptionAccepts(t *testing.T) {
 	// Sanity: 3 mock calls total — turn 1 (1) + turn 2 (initial + post-tool, 2).
 	if got := len(mock.calls); got != 3 {
 		t.Errorf("expected 3 total mock calls (turn 1 + turn 2 with tool loop), got %d", got)
+	}
+
+	// Audit-log assertion: the mutation tool's execution must have
+	// emitted an "audit: tool invoked" record with mutation:true and
+	// the tool name. ExecuteWithSandbox emits via slog.Info on the
+	// per-meta Logger (falling back to slog.Default when meta.Logger
+	// is nil); we redirected slog.Default above, so the record landed
+	// in our buffer.
+	auditLog := buf.String()
+	for _, want := range []string{
+		"audit: tool invoked",
+		`"mutation":true`,
+		`"tool":"test_mutation"`,
+	} {
+		if !strings.Contains(auditLog, want) {
+			t.Errorf("expected audit log to contain %q; got:\n%s", want, auditLog)
+		}
 	}
 }
