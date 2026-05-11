@@ -71,23 +71,43 @@ diverge from the supported build path.
 
 CI will run the full test suite plus license-audit checks on every PR.
 
-### Re-syncing the Chips skill body
+### Bumping `DOTFILES_REF`
 
-Chips' system prompt is augmented at build time with a curated subset of the
-operator's `github` skill, vendored at `internal/crew/skills/github.md` and
-embedded via `go:embed`. To re-sync from a local dotfiles checkout:
+Chips' system prompt is composed at runtime from three files sourced
+from `klazomenai/dotfiles` and bundled two ways:
 
-```bash
-cp ../dotfiles/claude/skills/github/SKILL.md internal/crew/skills/github.md
-# then hand-curate: strip the public-repo-sanitisation section, drop frontmatter,
-# leave the workflow rules. Diff before committing.
-```
+- **Embedded fallback** (the runtime source-of-truth): the three files
+  live under `internal/crew/skills/embedded/` and are `go:embed`ded
+  into the bridge binary at build time.
+- **Image-baked copy** (operator-inspectable): the same three files
+  are also placed under `/var/lib/klazomenai/skills/` in the runtime
+  container image, sourced directly from `klazomenai/dotfiles` at the
+  pinned `DOTFILES_REF` in `Dockerfile`.
 
-The sync is intentionally manual: the upstream skill targets human operators
-running Claude Code, and the embedded copy targets an autonomous orchestrator —
-sections need triage rather than blind copy. The
-`TestChipsSystemPromptContainsGitHubSkill` golden test catches accidental
-truncation.
+The two paths must agree. The `skills-drift` CI workflow
+(`.github/workflows/skills-drift.yml`) fails any PR where they
+diverge — either side moving requires the other to move in lockstep.
+
+To bump the dotfiles ref:
+
+1. **Bump the pin in `Dockerfile`** — edit the `ARG DOTFILES_REF=...`
+   line in the `dotfiles` stage to the new full 40-char git SHA on
+   `klazomenai/dotfiles` main.
+2. **Re-bundle the embedded fallback** — from a sibling
+   `klazomenai/dotfiles` checkout (cloned to `../dotfiles/`, or set
+   `DOTFILES_DIR=/path/to/dotfiles`), run `make sync-skills`. This
+   copies the three files into `internal/crew/skills/embedded/`.
+3. **Commit both edits in one PR** — branch
+   `chore/<issue>-bump-dotfiles-ref`, commit, draft PR. The skills-drift
+   CI catches a bump-without-rebundle (and vice versa).
+4. **Verify locally before push** — `git diff internal/crew/skills/embedded/`
+   shows the expected content delta; `go test -tags goolm ./internal/crew/...`
+   stays green (no test fixtures are pinned to old content).
+
+The bump should be **deliberate and reviewable** — the embedded
+content shapes Chips's runtime behaviour, and any sentinel-string
+changes risk breaking the L2 enforcement tests. Don't bundle a
+DOTFILES_REF bump with unrelated feature work.
 
 ## The Quartermaster's Conventions
 
