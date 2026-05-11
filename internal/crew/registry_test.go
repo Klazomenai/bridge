@@ -724,17 +724,21 @@ func TestChipsSystemPromptContainsGitHubSkill(t *testing.T) {
 	}
 }
 
-// TestChipsSystemPromptContainsOperatorIntentRule is one of the four L2
-// enforcement tests filed against the #148 epic. Asserts that the
-// universal addendum's "Operator Intent Required" section is composed
-// into Chips' system prompt so chips sees the rule at every turn —
-// mutations must reflect intent in the operator's most recent message,
-// and the pending-confirmation exception is documented with its worked
-// example ("close issue #99" → "Confirm?" → "yes").
+// TestChipsPromptContainsUniversalRules verifies that the four universal-rule
+// sentinels enumerated in #154's AC are composed into Chips's system prompt.
+// Loads the real config/crew.yaml so a divergence between the embedded
+// skill content and the AC contract is caught at build time.
 //
-// Loads the real config/crew.yaml so a divergence between the YAML's
-// declared skills and the embedded universal addendum is caught.
-func TestChipsSystemPromptContainsOperatorIntentRule(t *testing.T) {
+// Sentinels come from two source files (per Compose's output ordering):
+//   - "Allowlist is fail-closed", "Operator Intent Required",
+//     "Pending-confirmation exception" → embedded/_universal.md
+//   - "Refused outright" → embedded/github/profile.md
+//
+// The test asserts on the full composed prompt regardless of source,
+// since the prompt is what's shipped to the model. Plus a worked-example
+// stability anchor ("close issue 99") that catches subtle re-wraps in
+// the universal-addendum file.
+func TestChipsPromptContainsUniversalRules(t *testing.T) {
 	const configPath = "../../config/crew.yaml"
 	if _, err := os.Stat(configPath); err != nil {
 		t.Skipf("config/crew.yaml not found at %s (running outside repo?)", configPath)
@@ -745,12 +749,69 @@ func TestChipsSystemPromptContainsOperatorIntentRule(t *testing.T) {
 	}
 	prompt := r.Get("chips").SystemPrompt()
 	for _, fragment := range []string{
-		"Write Operations — Operator Intent Required",
+		"Allowlist is fail-closed",
+		"Operator Intent Required",
+		"Refused outright",
 		"Pending-confirmation exception",
-		"close issue #99", // worked example anchoring the rule
+		"close issue #99", // worked-example stability anchor (verbatim from _universal.md)
 	} {
 		if !strings.Contains(prompt, fragment) {
-			t.Errorf("chips prompt missing operator-intent fragment %q", fragment)
+			t.Errorf("chips prompt missing universal-rule sentinel %q", fragment)
+		}
+	}
+}
+
+// TestChipsPromptContainsGitHubProfileRules verifies that the three github
+// profile-addendum sentinels enumerated in #154's AC are composed into
+// Chips's system prompt. These rules sit in embedded/github/profile.md
+// (the per-skill operator-overlay) and gate Chips's github-specific
+// write-surface discipline.
+func TestChipsPromptContainsGitHubProfileRules(t *testing.T) {
+	const configPath = "../../config/crew.yaml"
+	if _, err := os.Stat(configPath); err != nil {
+		t.Skipf("config/crew.yaml not found at %s (running outside repo?)", configPath)
+	}
+	r, err := crew.Load(configPath)
+	if err != nil {
+		t.Fatalf("Load real crew.yaml: %v", err)
+	}
+	prompt := r.Get("chips").SystemPrompt()
+	for _, fragment := range []string{
+		"must not be exposed as callable tools",
+		"NEVER autonomously resolve Copilot review threads",
+		"Refused outright",
+	} {
+		if !strings.Contains(prompt, fragment) {
+			t.Errorf("chips prompt missing github-profile sentinel %q", fragment)
+		}
+	}
+}
+
+// TestNonChipsCrewLackUniversal verifies the universal addendum is gated to
+// crew with declared skills. Maren / Crest / Bosun / Lookout have no skills
+// in config/crew.yaml, so their system prompts must not contain the
+// Compose-emitted "## Operator Universal Rules" section header. The
+// universal addendum is the gate the operator-intent + allowlist + refused-
+// outright rules sit under; surfacing it on read-only crew would over-
+// constrain personas that have no mutation surface to gate.
+func TestNonChipsCrewLackUniversal(t *testing.T) {
+	const configPath = "../../config/crew.yaml"
+	if _, err := os.Stat(configPath); err != nil {
+		t.Skipf("config/crew.yaml not found at %s (running outside repo?)", configPath)
+	}
+	r, err := crew.Load(configPath)
+	if err != nil {
+		t.Fatalf("Load real crew.yaml: %v", err)
+	}
+	const universalHeader = "## Operator Universal Rules"
+	for _, id := range []string{"maren", "crest", "bosun", "lookout"} {
+		c := r.Get(id)
+		if c == nil {
+			t.Errorf("%s not found in real crew.yaml", id)
+			continue
+		}
+		if strings.Contains(c.SystemPrompt(), universalHeader) {
+			t.Errorf("%s system prompt unexpectedly contains universal-addendum header — gating broken", id)
 		}
 	}
 }
