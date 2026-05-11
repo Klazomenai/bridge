@@ -1113,11 +1113,16 @@ func TestHandle400MidLoopNoRecovery(t *testing.T) {
 // =====================================================================
 // L2 enforcement roster (#154)
 //
-// Two of the four L2 tests for the #148 epic live here. Companion tests:
-//   - internal/crew/registry_test.go::TestChipsSystemPromptContainsOperatorIntentRule
-//     — Compose output carries the Operator Intent rule and worked example
-//   - internal/tools/chips/chips_test.go::TestProductionChipsRegistryHasNoMergeTools
-//     — gh_pr_merge / gh_pr_ready are not registered
+// Tests in this file cover the orchestrator-layer L2 enforcement
+// assertions on #154's AC: allowlist refusal, mutation-without-operator-
+// intent (prompt-content), and pending-confirmation exception (with
+// audit-log emission). Companion tests live in:
+//   - internal/crew/registry_test.go (universal-rules + github-profile +
+//     non-chips-lack-universal prompt-content)
+//   - internal/tools/registry_test.go::TestGhPrMergeNotRegistered
+//     (gh_pr_merge / gh_pr_ready not in the production chips registry)
+//   - internal/tools/sandbox_test.go (audit-log emission + token
+//     redaction on the mutation:true path)
 // =====================================================================
 
 const chipsTestCrewYAML = `
