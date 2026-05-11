@@ -747,7 +747,11 @@ func TestChipsPromptContainsUniversalRules(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load real crew.yaml: %v", err)
 	}
-	prompt := r.Get("chips").SystemPrompt()
+	chips := r.Get("chips")
+	if chips == nil {
+		t.Fatal("chips not found in real crew.yaml")
+	}
+	prompt := chips.SystemPrompt()
 	for _, fragment := range []string{
 		"Allowlist is fail-closed",
 		"Operator Intent Required",
@@ -775,7 +779,11 @@ func TestChipsPromptContainsGitHubProfileRules(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load real crew.yaml: %v", err)
 	}
-	prompt := r.Get("chips").SystemPrompt()
+	chips := r.Get("chips")
+	if chips == nil {
+		t.Fatal("chips not found in real crew.yaml")
+	}
+	prompt := chips.SystemPrompt()
 	for _, fragment := range []string{
 		"must not be exposed as callable tools",
 		"NEVER autonomously resolve Copilot review threads",

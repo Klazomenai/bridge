@@ -1236,7 +1236,11 @@ func TestChipsRefusesMutationWithoutOperatorIntent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load real crew.yaml: %v", err)
 	}
-	prompt := reg.Get("chips").SystemPrompt()
+	chips := reg.Get("chips")
+	if chips == nil {
+		t.Fatal("chips not found in real crew.yaml")
+	}
+	prompt := chips.SystemPrompt()
 	const sentinel = "Every write operation must reflect intent in the operator's most recent"
 	if !strings.Contains(prompt, sentinel) {
 		t.Errorf("chips SystemPrompt missing operator-intent sentinel %q", sentinel)
