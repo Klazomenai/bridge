@@ -1,0 +1,53 @@
+name: Lint Workflows
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/**'
+      - '.github/scripts/**'
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/**'
+      - '.github/scripts/**'
+
+permissions:
+  contents: read
+
+# Opt into Node 24 ahead of GitHub's forced migration on 2026-06-02 (Node
+# 20 actions removed entirely 2026-09-16). Drop this env once affected
+# actions bump to Node-24-native versions.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  actionlint:
+    # Lints all workflows under .github/workflows/. Catches three classes
+    # of bug that surfaced as #163:
+    #
+    # 1. Unsafe interpolation of untrusted contexts (github.event.pull_request.body,
+    #    .title, .head.ref, etc.) into `run:` blocks.
+    # 2. Missing context references / typos in `${{ }}` expressions.
+    # 3. Malformed `if:` expressions and `types:` enumerations.
+    #
+    # Tag pinned for reproducibility — bump deliberately. The 1.7.x line is
+    # the current stable major; intermediate point releases are bugfix-only.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run actionlint
+        uses: docker://rhysd/actionlint:1.7.7
+        with:
+          args: -color
+
+  shellcheck:
+    # Lints all shell scripts under .github/scripts/. shellcheck is
+    # preinstalled on ubuntu-latest runners; no extra setup needed.
+    # Bridge has only two scripts today (check-coverage.sh and
+    # comment-coverage-delta.sh); the glob accommodates additions.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run shellcheck
+        run: shellcheck .github/scripts/*.sh
