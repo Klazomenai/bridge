@@ -79,10 +79,17 @@ jobs:
           set -o pipefail
           .github/scripts/check-coverage.sh coverage.out | tee coverage-report.txt
           rc=$?
-          if [[ "$rc" -ne 0 ]]; then
+          # Only downgrade rc=1 (threshold miss — the expected gate
+          # failure) to a warning. rc=2+ indicates a script/config
+          # error (missing coverage profile, missing thresholds YAML,
+          # malformed YAML) that the override label is NOT meant to
+          # bypass; let it propagate so a CI misconfiguration can't
+          # slip through under cover of the override.
+          if [[ "$rc" -eq 1 ]]; then
             echo "::warning::coverage gate would have failed (rc=$rc) but allow-coverage-drop label is set"
+            exit 0
           fi
-          exit 0
+          exit "$rc"
 
       - name: Upload coverage profile
         # `if: always()` so the artefact is preserved even when the gate

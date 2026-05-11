@@ -195,7 +195,7 @@ main_profile="$(fetch_main_profile)"
 # it; otherwise create a new one.
 #
 # IMPORTANT: marker MUST remain a constant literal. It is interpolated into
-# the jq filter on line 200 via shell expansion. A dynamic value would
+# the jq filter below via shell expansion. A dynamic value would
 # re-introduce a parser-injection class bug (cf. #163). `readonly` is the
 # enforcement; the comment is the rationale.
 readonly marker='<!-- bridge-coverage-delta-comment -->'
