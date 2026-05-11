@@ -227,7 +227,42 @@ func TestAuditRecordEmittedOnInvocation(t *testing.T) {
 	}
 }
 
-func TestAuditRecordRedactsSecrets(t *testing.T) {
+// TestAuditRecordEmittedOnWrite is one of the L2 enforcement tests on
+// #154's AC. Exercises the mutation:true code path through
+// ExecuteWithSandbox; asserts the audit-log record carries the
+// mutation flag, the tool name, and a redacted argv. Companion to the
+// broader TestAuditRecordEmittedOnInvocation which exercises the
+// mutation:false (read-only) case.
+func TestAuditRecordEmittedOnWrite(t *testing.T) {
+	logger, buf := auditLogger()
+	tool := &testTool{name: "ok", execFn: func(_ context.Context, _ json.RawMessage) (string, error) {
+		return "result", nil
+	}}
+	meta := tools.SandboxMeta{
+		CrewID:   "chips",
+		RoomID:   "!room:localhost",
+		ToolName: "gh_issue_close",
+		Mutation: true,
+		Logger:   logger,
+	}
+	input := json.RawMessage(`{"org":"klazomenai","repo":"bridge","issue":42}`)
+
+	tools.ExecuteWithSandbox(context.Background(), tool, input, tools.DefaultSandboxConfig(), meta)
+
+	out := buf.String()
+	for _, want := range []string{
+		`"msg":"audit: tool invoked"`,
+		`"tool":"gh_issue_close"`,
+		`"mutation":true`,
+		`"argv_redacted"`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("audit log missing %q\nfull buffer:\n%s", want, out)
+		}
+	}
+}
+
+func TestAuditRecordRedactsTokens(t *testing.T) {
 	logger, buf := auditLogger()
 	tool := &testTool{name: "ok", execFn: func(_ context.Context, _ json.RawMessage) (string, error) {
 		return "ok", nil
