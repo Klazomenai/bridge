@@ -1219,10 +1219,11 @@ func TestChipsRefusesNonAllowlistedRepo(t *testing.T) {
 // declared skills and the embedded universal addendum is caught.
 //
 // AC sentinel from #154 is "Every write operation must reflect intent in
-// the operator's most recent message". That literal is hard-wrapped
-// between "recent" and "message" in _universal.md (lines 40-41), so the
-// test asserts on the single-line prefix to be robust against future
-// re-wraps that preserve semantic meaning.
+// the operator's most recent message". The sentence is hard-wrapped
+// inside the "Write Operations — Operator Intent Required" section of
+// _universal.md (the wrap currently falls between "recent" and
+// "message"); the test asserts on the single-line prefix to be robust
+// against future re-wraps that preserve semantic meaning.
 //
 // Lives in the orchestrator package per #154 AC. Functionally a
 // prompt-content test; companions in internal/crew/registry_test.go
