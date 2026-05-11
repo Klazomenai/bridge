@@ -157,7 +157,7 @@ jobs:
 
           go-licenses check ./... \
             --disallowed_types=forbidden \
-            --ignore=$(go list -m | head -1)
+            --ignore="$(go list -m | head -1)"
 
           # Capture stderr so go-licenses diagnostics surface in CI
           # logs whether the step passes or fails. Silencing stderr
