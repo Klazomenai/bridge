@@ -1339,8 +1339,10 @@ func TestPendingConfirmationExceptionAccepts(t *testing.T) {
 
 	// Audit-log assertion: the mutation tool's execution must have
 	// emitted an "audit: tool invoked" record with mutation:true and
-	// the tool name. sandbox.go (line 110) uses slog.Info; we redirected
-	// slog.Default above, so the record landed in our buffer.
+	// the tool name. ExecuteWithSandbox emits via slog.Info on the
+	// per-meta Logger (falling back to slog.Default when meta.Logger
+	// is nil); we redirected slog.Default above, so the record landed
+	// in our buffer.
 	auditLog := buf.String()
 	for _, want := range []string{
 		"audit: tool invoked",
