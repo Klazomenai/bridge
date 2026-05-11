@@ -13,6 +13,33 @@ RUN CGO_ENABLED=0 go build -tags goolm -trimpath \
     -ldflags="-s -w" \
     -o /out/bridge ./cmd/bridge
 
+# Stage to fetch klazomenai/dotfiles-sourced skill content at a pinned SHA.
+# The bridge binary reads its skill content from the embedded fallback
+# (compiled into the binary via internal/crew/skills/embedded/); this
+# image-baked copy gives operators an inspectable surface
+# (`kubectl exec -- cat /var/lib/klazomenai/skills/_universal.md`) that
+# does not require grovelling the binary.
+#
+# DOTFILES_REF must be a full 40-char git SHA on klazomenai/dotfiles
+# main. Bump ceremony: see CONTRIBUTING.md "Bumping `DOTFILES_REF`".
+# The skills-drift CI workflow catches DOTFILES_REF bumps not paired
+# with a re-bundle of internal/crew/skills/embedded/.
+FROM alpine:3.21 AS dotfiles
+
+ARG DOTFILES_REF=4b856162d85d147648a26fb3fd5573a0f9b7e15d
+
+RUN apk add --no-cache git ca-certificates
+
+WORKDIR /dotfiles
+# Fetch by SHA directly; --depth=1 keeps the stage small. GitHub
+# permits arbitrary-SHA fetches on its hosted repos
+# (uploadpack.allowAnySHA1InWant), so no separate clone-then-checkout
+# round-trip is needed.
+RUN git init -q && \
+    git remote add origin https://github.com/Klazomenai/dotfiles && \
+    git fetch -q --depth=1 origin "${DOTFILES_REF}" && \
+    git checkout -q FETCH_HEAD
+
 # Alpine runtime — kubectl and helm needed for Maren/Bosun cluster tools.
 # Distroless has no package manager or shell; Alpine is minimal (~7MB) and
 # version-pinned per security skill guidance.
@@ -49,6 +76,20 @@ RUN install -d -m 0700 -o bridge -g bridge /var/lib/bridge && \
 
 COPY --from=builder /out/bridge /bridge
 COPY config/crew.yaml /config/crew.yaml
+
+# Bake skill content from the pinned dotfiles ref. The orchestrator
+# reads the embedded fallback (compiled into the binary) at runtime;
+# this image-baked copy is the operator-inspectable surface. The
+# skills-drift CI workflow catches drift between the embedded fallback
+# and the dotfiles ref these files come from.
+COPY --from=dotfiles /dotfiles/claude/profiles/_universal.md /var/lib/klazomenai/skills/_universal.md
+COPY --from=dotfiles /dotfiles/claude/skills/github/SKILL.md /var/lib/klazomenai/skills/github/SKILL.md
+COPY --from=dotfiles /dotfiles/claude/profiles/github.md /var/lib/klazomenai/skills/github/profile.md
+# `find ... -name '*.md'` recurses correctly into the github/ subdir;
+# the AC's `chmod -R 0444 .../*.md` form would only match the top-level
+# _universal.md because of shell-glob expansion semantics.
+RUN chown -R bridge:bridge /var/lib/klazomenai/skills && \
+    find /var/lib/klazomenai/skills -name '*.md' -exec chmod 0444 {} +
 
 USER bridge
 
