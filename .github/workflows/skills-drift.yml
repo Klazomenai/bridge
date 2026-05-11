@@ -1,0 +1,85 @@
+name: Skills Drift
+
+# Catches mismatches between internal/crew/skills/embedded/ (the binary's
+# runtime fallback) and the klazomenai/dotfiles ref pinned in
+# Dockerfile's ARG DOTFILES_REF. Fires on PR diff to either side of
+# the contract, plus a weekly schedule so a forgotten bump elsewhere
+# doesn't sit unnoticed.
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'internal/crew/skills/embedded/**'
+      - 'Dockerfile'
+  schedule:
+    # Monday 09:00 UTC — early-week visibility before active development.
+    - cron: '0 9 * * 1'
+
+permissions:
+  contents: read
+
+# Opt into Node 24 ahead of GitHub's forced migration on 2026-06-02
+# (Node 20 actions removed entirely 2026-09-16). Drop this env once
+# affected actions bump to Node-24-native versions.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  drift:
+    name: Embedded vs dotfiles drift
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract DOTFILES_REF from Dockerfile
+        # Fail loudly if the ARG is missing or not a 40-char hex SHA.
+        # Branch-name / tag refs would silently re-resolve on each
+        # run, defeating the drift gate; the bump ceremony requires a
+        # full SHA per CONTRIBUTING.md.
+        run: |
+          ref=$(awk -F'=' '/^ARG DOTFILES_REF=/ { print $2; exit }' Dockerfile | tr -d ' "')
+          if [[ -z "$ref" ]]; then
+            echo "::error::DOTFILES_REF ARG not found in Dockerfile"
+            exit 1
+          fi
+          if ! [[ "$ref" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::DOTFILES_REF='${ref}' is not a 40-char git SHA"
+            exit 1
+          fi
+          echo "DOTFILES_REF=${ref}" >> "$GITHUB_ENV"
+          echo "Using DOTFILES_REF=${ref}"
+
+      - name: Clone klazomenai/dotfiles at pinned SHA
+        run: |
+          mkdir /tmp/dotfiles
+          cd /tmp/dotfiles
+          git init -q
+          git remote add origin https://github.com/Klazomenai/dotfiles
+          git fetch -q --depth=1 origin "$DOTFILES_REF"
+          git checkout -q FETCH_HEAD
+
+      - name: Diff embedded vs dotfiles
+        run: |
+          set -e
+          fail=0
+          for pair in \
+              "internal/crew/skills/embedded/_universal.md:/tmp/dotfiles/claude/profiles/_universal.md" \
+              "internal/crew/skills/embedded/github/SKILL.md:/tmp/dotfiles/claude/skills/github/SKILL.md" \
+              "internal/crew/skills/embedded/github/profile.md:/tmp/dotfiles/claude/profiles/github.md"; do
+            ours="${pair%:*}"
+            theirs="${pair#*:}"
+            if ! diff -q "$ours" "$theirs" > /dev/null 2>&1; then
+              echo "::error file=${ours}::drift detected vs dotfiles@${DOTFILES_REF}"
+              diff -u "$ours" "$theirs" || true
+              fail=1
+            fi
+          done
+          if [[ "$fail" -eq 1 ]]; then
+            echo
+            echo "To resolve: clone klazomenai/dotfiles at DOTFILES_REF=${DOTFILES_REF},"
+            echo "then run 'make sync-skills' (from the bridge repo root) and commit the"
+            echo "updated embedded/ files. Or revert the DOTFILES_REF bump in the"
+            echo "Dockerfile if the embedded content is the desired state."
+            exit 1
+          fi
+          echo "No drift: embedded/ matches dotfiles@${DOTFILES_REF}"
