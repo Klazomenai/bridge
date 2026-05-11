@@ -135,6 +135,12 @@ fetch_main_profile() {
 main_profile="$(fetch_main_profile)"
 
 # Build the comment body.
+#
+# Package names ($pkg) are Go module paths, character set [A-Za-z0-9_./-].
+# None of those collide with markdown table cell special chars (| or
+# newline) or backticks (used for code-formatting). If `per_package`'s
+# input source ever broadens beyond Go module paths, audit this
+# assumption and add escaping.
 # shellcheck disable=SC2016 # printf format strings contain literal backticks (markdown code-formatting), not command substitution
 {
     echo "## 📊 Coverage report"
@@ -179,7 +185,7 @@ main_profile="$(fetch_main_profile)"
     fi
 
     echo ""
-    echo "Thresholds enforced via \`.github/coverage-thresholds.yaml\`. Override with \`[allow-coverage-drop]\` in the PR body for deliberate drops."
+    echo "Thresholds enforced via \`.github/coverage-thresholds.yaml\`. Override with the \`allow-coverage-drop\` label for deliberate drops."
     echo ""
     echo "<sub>Posted by \`.github/scripts/comment-coverage-delta.sh\`. Best-effort; not gating.</sub>"
 } > /tmp/coverage-comment.md
@@ -187,7 +193,12 @@ main_profile="$(fetch_main_profile)"
 # Post (or update) the comment. We use a marker comment to avoid spamming
 # the PR on every push — find an existing comment with the marker and edit
 # it; otherwise create a new one.
-marker='<!-- bridge-coverage-delta-comment -->'
+#
+# IMPORTANT: marker MUST remain a constant literal. It is interpolated into
+# the jq filter below via shell expansion. A dynamic value would
+# re-introduce a parser-injection class bug (cf. #163). `readonly` is the
+# enforcement; the comment is the rationale.
+readonly marker='<!-- bridge-coverage-delta-comment -->'
 echo "$marker" >> /tmp/coverage-comment.md
 
 # Paginate the comments lookup. Default page size is 30; PRs that go through

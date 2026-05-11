@@ -114,6 +114,12 @@ Where the rigging is dressed, every line in its place:
 - Domain: `domain:infra`, `domain:ai`, `domain:android`, `domain:matrix`,
   `domain:security`
 - Priority: `priority:high`, `priority:medium`, `priority:low`
+- Override: `allow-coverage-drop` — applied to a PR that intentionally
+  drops per-package test coverage (e.g. removing a tested code path
+  during a refactor). The gate still runs and posts the coverage delta
+  as a comment, but a below-threshold result becomes a warning instead
+  of a failure. Label add/remove retriggers CI automatically. RBAC-gated
+  (triage permission); not author-self-service.
 
 ## The Black Spot — Reporting Security Issues
 

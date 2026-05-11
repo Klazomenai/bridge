@@ -34,10 +34,45 @@ jobs:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
 
+      - name: Validate release-please outputs
+        # googleapis/release-please-action@v4 does NOT sanitise the
+        # `tag_name` and `version` outputs before calling setOutput().
+        # Component / separator from release-please-config.json flow
+        # through unmodified. Today's config produces v{semver}; this
+        # step fails loudly if release-please emits anything else,
+        # rather than letting an unexpected value land in a docker tag
+        # or step-summary markdown.
+        #
+        # Regex covers SemVer with optional `-<channel>[.<n>]` prerelease
+        # suffix (e.g. 1.2.3, 1.2.3-alpha, 1.2.3-alpha.1). Build-metadata
+        # (`+xxx`) is deliberately not accepted — bridge's config does
+        # not emit it; if it ever does, bump the regex deliberately.
+        if: steps.release.outputs.release_created == 'true'
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+          TAG_NAME: ${{ steps.release.outputs.tag_name }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-z]+(\.[0-9]+)?)?$ ]]; then
+            echo "::error::release-please version output '$VERSION' does not match expected SemVer pattern"
+            exit 1
+          fi
+          expected_tag="v${VERSION}"
+          if [[ "$TAG_NAME" != "$expected_tag" ]]; then
+            echo "::error::release-please tag_name '$TAG_NAME' does not match expected '$expected_tag' (release-please-config.json drift?)"
+            exit 1
+          fi
+          echo "release-please outputs validated: version=$VERSION tag=$TAG_NAME"
+
   docker:
     name: Build and Push Docker Image
     needs: release-please
-    if: ${{ needs.release-please.outputs.release_created }}
+    # `== 'true'` is explicit. release_created is documented as the
+    # literal string "true" or "false"; the truthy-coercion form
+    # `if: ${{ ... }}` happens to work today but matches a different
+    # behaviour shape than the equivalent if a future GHA expression
+    # change tightens coercion.
+    if: needs.release-please.outputs.release_created == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -72,13 +107,22 @@ jobs:
           cache-from: type=gha
 
       - name: Summary
+        # version is validated upstream (see Validate release-please outputs
+        # in the release-please job). Tag is reconstructed locally as
+        # `v${VERSION}` rather than consuming the un-sanitised tag_name
+        # output — same value today, but removes the un-sanitised data
+        # path from the markdown-rendering surface.
+        env:
+          VERSION: ${{ needs.release-please.outputs.version }}
         run: |
-          echo "## Docker Image Published" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "**Version:** \`${{ needs.release-please.outputs.version }}\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "**Tag:** \`${{ needs.release-please.outputs.tag_name }}\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "Pull:" >> "$GITHUB_STEP_SUMMARY"
-          echo "\`\`\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "docker pull ghcr.io/klazomenai/bridge:${{ needs.release-please.outputs.version }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "\`\`\`" >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "## Docker Image Published"
+            echo
+            echo "**Version:** \`$VERSION\`"
+            echo "**Tag:** \`v$VERSION\`"
+            echo
+            echo "Pull:"
+            echo '```'
+            echo "docker pull ghcr.io/klazomenai/bridge:$VERSION"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
