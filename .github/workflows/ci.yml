@@ -5,6 +5,13 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+    # `labeled` / `unlabeled` are added so adding the `allow-coverage-drop`
+    # label on a PR with an already-failed run retriggers CI immediately.
+    # Without them, the override label would only take effect on the next
+    # push (default types are `[opened, synchronize, reopened]`). The other
+    # three are listed explicitly because listing any types replaces the
+    # default set rather than augmenting it.
+    types: [opened, synchronize, reopened, labeled, unlabeled]
 
 # Opt into Node 24 ahead of GitHub's forced migration on 2026-06-02 (Node
 # 20 actions removed entirely 2026-09-16). Affected here: actions/checkout,
@@ -39,31 +46,43 @@ jobs:
             -covermode=atomic \
             ./internal/...
 
-      - name: Coverage check (per-package thresholds)
-        id: coverage_check
-        # The override marker `[allow-coverage-drop]` in a PR body bypasses
-        # the gate but still surfaces the result for visibility. Useful for
-        # deliberate refactors that remove dead code (and thus coverage).
+      - name: Coverage check (enforce)
+        # Per-package coverage gate. Fails the job if any tracked package
+        # falls below its threshold in coverage-thresholds.yaml. The
+        # override path lives in the next step.
         #
-        # `set -o pipefail` is explicit (GitHub Actions enables it by default
-        # in the runner shell, but `set +e` doesn't disable pipefail and we
-        # want the contract to survive any future runner config drift).
-        # Without it, `rc=$?` would capture `tee`'s exit code (always 0) and
-        # silently mask gate failures.
+        # `set -o pipefail` is explicit so the step exits with the script's
+        # rc rather than `tee`'s (always 0). The override decision is made
+        # by the GHA expression-language `if:` below — bash never sees the
+        # override signal, eliminating the PR-body-interpolation class of
+        # bug that bit #161.
+        if: >-
+          github.event_name != 'pull_request' ||
+          !contains(github.event.pull_request.labels.*.name, 'allow-coverage-drop')
+        run: |
+          set -o pipefail
+          .github/scripts/check-coverage.sh coverage.out | tee coverage-report.txt
+
+      - name: Coverage check (override warning)
+        # Operator override path: PR carries the `allow-coverage-drop`
+        # label. The gate still runs and surfaces the result for
+        # visibility, but a below-threshold result becomes a warning
+        # instead of a failure. The label is RBAC-gated (triage
+        # permission), so this override is not self-service for PR
+        # authors. Adding/removing the label retriggers CI via the
+        # `labeled`/`unlabeled` event types declared above.
+        if: >-
+          github.event_name == 'pull_request' &&
+          contains(github.event.pull_request.labels.*.name, 'allow-coverage-drop')
         run: |
           set +e
           set -o pipefail
           .github/scripts/check-coverage.sh coverage.out | tee coverage-report.txt
           rc=$?
-          set +o pipefail
           if [[ "$rc" -ne 0 ]]; then
-            if [[ "${{ github.event_name }}" == "pull_request" ]] \
-                && grep -qF '[allow-coverage-drop]' <<< "${{ github.event.pull_request.body }}"; then
-              echo "::warning::coverage gate would have failed (rc=$rc) but [allow-coverage-drop] override is set"
-              exit 0
-            fi
-            exit "$rc"
+            echo "::warning::coverage gate would have failed (rc=$rc) but allow-coverage-drop label is set"
           fi
+          exit 0
 
       - name: Upload coverage profile
         # `if: always()` so the artefact is preserved even when the gate
