@@ -10,8 +10,13 @@
 # (#81/#86/#87/#88/#91/#121/#122) have all landed.
 #
 # Override: PRs that intentionally drop coverage (e.g. removing dead code)
-# can include [allow-coverage-drop] in the PR body to bypass the gate. The
-# CI run will still post the coverage delta as a comment for visibility.
+# can apply the `allow-coverage-drop` label to bypass the gate. The gate
+# still runs and posts the coverage delta as a comment; below-threshold
+# results become warnings instead of failures. Label add/remove events
+# automatically retrigger CI. The label is RBAC-gated (triage permission
+# or higher) — not author-self-service. See #163 for the design and the
+# parser-injection bug that motivated moving the override out of the PR
+# body.
 #
 # Repo-wide overall coverage is tracked under `total` (informational only,
 # not used for gating — per-package thresholds carry the security weight).
