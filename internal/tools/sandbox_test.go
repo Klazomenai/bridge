@@ -230,9 +230,12 @@ func TestAuditRecordEmittedOnInvocation(t *testing.T) {
 // TestAuditRecordEmittedOnWrite is one of the L2 enforcement tests on
 // #154's AC. Exercises the mutation:true code path through
 // ExecuteWithSandbox; asserts the audit-log record carries the
-// mutation flag, the tool name, and a redacted argv. Companion to the
-// broader TestAuditRecordEmittedOnInvocation which exercises the
-// mutation:false (read-only) case.
+// mutation flag, the tool name, and the presence of the argv_redacted
+// field. (Actual redaction behaviour is exercised separately by
+// TestAuditRecordRedactsTokens — this test does not configure
+// SandboxMeta.Secrets.) Companion to the broader
+// TestAuditRecordEmittedOnInvocation which exercises the mutation:false
+// (read-only) case.
 func TestAuditRecordEmittedOnWrite(t *testing.T) {
 	logger, buf := auditLogger()
 	tool := &testTool{name: "ok", execFn: func(_ context.Context, _ json.RawMessage) (string, error) {

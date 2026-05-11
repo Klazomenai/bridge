@@ -736,7 +736,7 @@ func TestChipsSystemPromptContainsGitHubSkill(t *testing.T) {
 //
 // The test asserts on the full composed prompt regardless of source,
 // since the prompt is what's shipped to the model. Plus a worked-example
-// stability anchor ("close issue 99") that catches subtle re-wraps in
+// stability anchor ("close issue #99") that catches subtle re-wraps in
 // the universal-addendum file.
 func TestChipsPromptContainsUniversalRules(t *testing.T) {
 	const configPath = "../../config/crew.yaml"
