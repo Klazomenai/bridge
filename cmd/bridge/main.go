@@ -143,15 +143,12 @@ func main() {
 	ghToken := os.Getenv("GITHUB_TOKEN")
 	chipsRepoCSV := os.Getenv("CHIPS_REPO_ALLOWLIST")
 	if ghToken != "" && chipsRepoCSV != "" && hasExec("gh") && hasExec("git") {
-		allowlist := chipstools.ParseRepoAllowlist(chipsRepoCSV)
-		execFn := chipstools.DefaultExecFn()
-		toolReg.Register(chipstools.NewGHIssueListTool(execFn, allowlist, ghToken))
-		toolReg.Register(chipstools.NewGHIssueViewTool(execFn, allowlist, ghToken))
-		toolReg.Register(chipstools.NewGHPRListTool(execFn, allowlist, ghToken))
-		toolReg.Register(chipstools.NewGHPRViewTool(execFn, allowlist, ghToken))
-		toolReg.Register(chipstools.NewGHPRChecksTool(execFn, allowlist, ghToken))
-		toolReg.Register(chipstools.NewGitLogTool(execFn, ghToken))
-		toolReg.Register(chipstools.NewGitDiffTool(execFn, ghToken))
+		chipstools.RegisterChipsTools(
+			toolReg,
+			chipstools.DefaultExecFn(),
+			chipstools.ParseRepoAllowlist(chipsRepoCSV),
+			ghToken,
+		)
 		slog.Info("chips: tools registered", "repos", chipsRepoCSV)
 	} else {
 		toolReg.Register(tools.NewStubTool("gh_issue_list", "List GitHub issues (GITHUB_TOKEN or CHIPS_REPO_ALLOWLIST not set, or gh/git not available)"))

@@ -1,7 +1,6 @@
 package crew
 
 import (
-	_ "embed"
 	"errors"
 	"fmt"
 	"os"
@@ -12,14 +11,6 @@ import (
 
 	"klazomenai/bridge/internal/crew/skills"
 )
-
-// chipsGitHubSkill is the curated github skill body, vendored from the operator's
-// dotfiles. Appended to Chips' system prompt at registry-load time so the persona
-// inherits the operator's standing rules on commits, branches, PRs, and review
-// threads. Re-sync via the command in CONTRIBUTING.md.
-//
-//go:embed skills/github.md
-var chipsGitHubSkill string
 
 // verbosityDescriptions maps verbosity mode names to their injected instruction text.
 var verbosityDescriptions = map[string]string{
@@ -45,14 +36,9 @@ type crewEntryYAML struct {
 	SystemPrompt string    `yaml:"system_prompt"`
 	Tools        []string  `yaml:"tools"`
 	// Skills is the optional list of skill names whose SKILL.md (and
-	// optional profile.md) drive the Compose-rendered prompt for this
-	// crew member at registry-load time via the skills package's
-	// Compose function. The result is stored on
-	// BaseCrew.composeOutput and reachable via Crew.ComposeOutput;
-	// SystemPrompt continues to return the id-gate output until the
-	// gate flip in #154. Empty / omitted means the crew gets
-	// persona+verbosity only — current Maren/Crest/Bosun/Lookout
-	// behaviour.
+	// optional profile.md) drive the Compose-rendered system prompt for
+	// this crew member at registry-load time. Empty / omitted means the
+	// crew gets persona+verbosity only.
 	Skills []string `yaml:"skills"`
 }
 
@@ -77,19 +63,14 @@ func Load(path string) (*Registry, error) {
 }
 
 // LoadWithSource is Load with a caller-provided skills.Source. Used by
-// tests (injecting a MapSource for hermetic Compose-output assertions)
-// and by future callers (e.g. main.go) that want to layer a filesystem
-// override over the embedded fallback.
+// tests (injecting a mapSource for hermetic Compose-output assertions)
+// and by callers (e.g. main.go) that want to layer a filesystem override
+// over the embedded fallback.
 //
 // For each crew entry with a non-empty `skills:` list, this function
 // invokes skills.Compose against the supplied source and stores the
-// rendered prompt on BaseCrew.composeOutput, reachable via
-// BaseCrew.ComposeOutput. The legacy `if id == "chips"` gate remains
-// the source of truth for SystemPrompt() in this sub-PR — the gate
-// flip happens in #154 (PR4). This dual-path arrangement gives PR4's
-// L2 enforcement tests an A/B affordance: legacy output through
-// SystemPrompt(), new output through ComposeOutput(), both renderable
-// without changing crew.yaml.
+// rendered output as the crew's system prompt. Crew with no declared
+// skills get persona+verbosity only.
 //
 // LoadWithSource fails fast on any skill that does not resolve via the
 // supplied source: Compose's wrapped ErrNotFound (or ErrUniversalRequired
@@ -133,45 +114,27 @@ func LoadWithSource(path string, source skills.Source) (*Registry, error) {
 		if !ok {
 			return nil, fmt.Errorf("crew %s: unknown verbosity %q", id, entry.Verbosity)
 		}
-		// Render the persona once with {verbosity} substituted, then
-		// derive both prompt paths from it. The id-gate mutates only
-		// `prompt`; Compose receives the unmutated persona.
 		persona := strings.ReplaceAll(entry.SystemPrompt, "{verbosity}", verbDesc)
-		prompt := persona
-		if id == "chips" {
-			// TrimRight bounds the separator on the prompt side: YAML `|`
-			// literal block scalars produce a trailing newline today, but
-			// `|-` would strip it. Normalising to exactly one blank line
-			// keeps the boundary stable regardless of YAML chomp style.
-			prompt = strings.TrimRight(prompt, "\n") + "\n\n" + chipsGitHubSkill
-		}
-
-		// Dual-path: render the Compose-based prompt for any crew with
-		// declared skills. The legacy id-gate above still wins for
-		// SystemPrompt() in this PR; the new prompt is reachable via
-		// ComposeOutput() so PR4's L2 tests can A/B both paths before
-		// the gate flip.
-		var composeOutput string
+		systemPrompt := persona
 		if len(entry.Skills) > 0 {
 			composed, err := skills.Compose(persona, entry.Skills, source)
 			if err != nil {
 				return nil, fmt.Errorf("crew %s: %w", id, err)
 			}
-			composeOutput = composed
+			systemPrompt = composed
 		}
 
 		registry.crew[id] = &BaseCrew{
-			id:            id,
-			name:          entry.Name,
-			role:          entry.Role,
-			model:         entry.Model,
-			verbosity:     entry.Verbosity,
-			systemPrompt:  prompt,
-			composeOutput: composeOutput,
-			announcesAs:   entry.Voice.AnnouncesAs,
-			voiceModel:    entry.Voice.Model,
-			tools:         entry.Tools,
-			skills:        entry.Skills,
+			id:           id,
+			name:         entry.Name,
+			role:         entry.Role,
+			model:        entry.Model,
+			verbosity:    entry.Verbosity,
+			systemPrompt: systemPrompt,
+			announcesAs:  entry.Voice.AnnouncesAs,
+			voiceModel:   entry.Voice.Model,
+			tools:        entry.Tools,
+			skills:       entry.Skills,
 		}
 	}
 
