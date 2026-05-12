@@ -184,25 +184,47 @@ func Sanitise(input string) string {
 // byte length (NOT the input itself — leaking a suspected-toxic
 // payload into logs would defeat the redaction).
 func SanitiseWith(input string, patterns []Pattern) (out string) {
+	// Capture the original length BEFORE truncation so a deferred
+	// panic log reflects the actual payload size that crashed the
+	// sanitiser, not the post-truncation slice length. Useful for
+	// incident triage ("how big was the toxic payload?") and lost
+	// otherwise because `input` is reassigned below.
+	origLen := len(input)
+
 	defer func() {
 		if r := recover(); r != nil {
 			slog.Error("sanitiser panic recovered",
 				"panic", r,
-				"input_bytes", len(input),
+				"input_bytes", origLen,
+				"truncated", origLen > MaxSanitiserInputBytes,
 			)
 			out = SanitiserErrorReplacement
 		}
 	}()
 
-	// Truncate before any pattern matching — guards against
+	// Truncate INPUT before any pattern matching — guards against
 	// regex-DoS on attacker-controlled inputs.
-	if len(input) > MaxSanitiserInputBytes {
+	if origLen > MaxSanitiserInputBytes {
 		input = input[:MaxSanitiserInputBytes]
 	}
 
 	out = input
 	for _, p := range patterns {
 		out = p.Regex.ReplaceAllString(out, p.Replacement)
+	}
+
+	// Truncate OUTPUT to the same cap. Some pattern replacements run
+	// slightly longer than their minimal input match — the U+2026
+	// ellipsis is 3 UTF-8 bytes where the matched byte was 1 ASCII —
+	// so an adversarial body packed with minimal-length matches (e.g.
+	// 4096 `xoxb-1234567890 ` units = exactly 65 536 bytes) would
+	// produce output of 69 632 bytes without this cap. Re-truncating
+	// preserves the byte-budget invariant for downstream consumers
+	// (notably the orchestrator-level safety floor in #129, which
+	// chains another Sanitise pass and benefits from a known upper
+	// bound on its own input size).
+	if len(out) > MaxSanitiserInputBytes {
+		out = out[:MaxSanitiserInputBytes]
 	}
 	return out
 }

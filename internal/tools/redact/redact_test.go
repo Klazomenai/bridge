@@ -274,6 +274,38 @@ func TestSanitiseTruncationPreservesShortInputs(t *testing.T) {
 	}
 }
 
+func TestSanitiseOutputBoundedAtCapEvenWithExpandingReplacements(t *testing.T) {
+	// Some pattern replacements add bytes to the matched span — the
+	// U+2026 ellipsis sentinel is 3 UTF-8 bytes where the originating
+	// pattern character class only accepts 1-byte ASCII. Stack enough
+	// minimal-length matches to fill the input cap and the naive
+	// (no output re-truncation) implementation would produce output
+	// exceeding MaxSanitiserInputBytes by ~1 byte per match. The
+	// function caps output at MaxSanitiserInputBytes so downstream
+	// consumers (notably the orchestrator-level safety floor in #129)
+	// see a known byte budget regardless of input shape.
+	unit := "xoxb-1234567890 " // 16 bytes: 15-byte minimal match + space
+	units := redact.MaxSanitiserInputBytes / len(unit)
+	in := strings.Repeat(unit, units)
+	if len(in) != redact.MaxSanitiserInputBytes {
+		t.Fatalf("fixture broken: in is %d bytes, expected %d",
+			len(in), redact.MaxSanitiserInputBytes)
+	}
+
+	out := redact.Sanitise(in)
+
+	if len(out) > redact.MaxSanitiserInputBytes {
+		t.Errorf("output exceeds cap despite re-truncation: got %d bytes, cap %d",
+			len(out), redact.MaxSanitiserInputBytes)
+	}
+	// Pin that the test fixture actually exercised the replacement
+	// path — without this, an inert input could trivially pass the
+	// cap assertion.
+	if !strings.Contains(out, "xoxb-…REDACTED") {
+		t.Error("test fixture did not produce slack-token replacement; assertion above is vacuous")
+	}
+}
+
 func TestSanitiseEmptyInput(t *testing.T) {
 	if out := redact.Sanitise(""); out != "" {
 		t.Errorf("empty input altered: %q", out)
