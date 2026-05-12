@@ -101,7 +101,7 @@ To bump the dotfiles ref:
    `chore/<issue>-bump-dotfiles-ref`, commit, draft PR. The skills-drift
    CI catches a bump-without-rebundle (and vice versa).
 4. **Verify locally before push** — `git diff internal/crew/skills/embedded/`
-   shows the expected content delta; `go test -tags goolm ./internal/crew/...`
+   shows the expected content delta; `CGO_ENABLED=0 go test -tags goolm ./internal/crew/...`
    stays green (no test fixtures are pinned to old content).
 
 The bump should be **deliberate and reviewable** — the embedded
