@@ -25,7 +25,7 @@ func TestChipsSanitisePerPatternPositive(t *testing.T) {
 		{"github_token_ghu", "leaked user token ghu_" + strings.Repeat("B", 40) + " end", "ghu_…REDACTED"},
 		{"github_pat", "found token github_pat_" + strings.Repeat("C", 30) + " in logs", "github_pat_…REDACTED"},
 		{"openai_anthropic_key", "claude key sk-ant-" + strings.Repeat("d", 40) + " in comment", "sk-…REDACTED"},
-		{"slack_token", "slack bot tok xoxb-1234567890-abcde-fghijk in body", "xox-…REDACTED"},
+		{"slack_token", "slack bot tok xoxb-1234567890-abcde-fghijk in body", "xoxb-…REDACTED"},
 		{"jwt", "auth=eyJ-TEST-HEADER-PART.eyJ-TEST-PAYLOAD-PART.TEST-SIGNATURE-PART rest", "JWT-REDACTED"},
 		{"pem_block", "found:\n-----BEGIN RSA PRIVATE KEY-----\nMIIEpAIBAA\nKCAQEA\n-----END RSA PRIVATE KEY-----\nin comment", "-----BEGIN … KEY----- REDACTED -----END … KEY-----"},
 		{"bearer_token", "Authorization: Bearer abc123def456ghi.789-jkl_mno", "Bearer REDACTED"},

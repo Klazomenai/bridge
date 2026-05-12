@@ -26,14 +26,15 @@ import (
 	"strings"
 )
 
-// Sentinel is the replacement string substituted for each Redacted secret.
+// Sentinel is the replacement string substituted for each redacted secret.
 const Sentinel = "[REDACTED]"
 
 // MaxSanitiserInputBytes is the upper byte length Sanitise will process.
 // Inputs longer than this are truncated to this length before pattern
 // matching begins. The cap defends against regex-DoS amplification on
-// attacker-controlled bodies (a 1 MB pathological comment costs ~16 ×
-// 65 KB regex passes, not ~16 × 1 MB).
+// attacker-controlled bodies — a pathological 1 MB comment costs
+// len(Patterns) × 65 KB regex passes, not len(Patterns) × 1 MB, no
+// matter how many patterns are added to the default set later.
 //
 // Truncation may split a multi-byte UTF-8 rune at the boundary; the
 // resulting trailing invalid byte is harmless under Go's regexp (which
@@ -97,9 +98,13 @@ var Patterns = []Pattern{
 		Replacement: "sk-…REDACTED",
 	},
 	{
-		Name:        "slack_token",
-		Regex:       regexp.MustCompile(`xox[baprs]-[A-Za-z0-9-]{10,}`),
-		Replacement: "xox-…REDACTED",
+		Name: "slack_token",
+		// Capture the type char (b/a/p/r/s) so the sentinel preserves
+		// which Slack token shape was redacted — useful when reading
+		// sanitised output for incident debugging (xoxb-…REDACTED is a
+		// bot token; xoxp-…REDACTED is a user token; etc.).
+		Regex:       regexp.MustCompile(`xox([baprs])-[A-Za-z0-9-]{10,}`),
+		Replacement: "xox${1}-…REDACTED",
 	},
 	{
 		Name:        "jwt",
@@ -121,9 +126,15 @@ var Patterns = []Pattern{
 		Replacement: "Bearer REDACTED",
 	},
 	{
-		Name:        "password_assignment",
-		Regex:       regexp.MustCompile(`(?i)password\s*[:=]\s*\S+`),
-		Replacement: "password: REDACTED",
+		Name: "password_assignment",
+		// Capture the matched keyword + delimiter so original case
+		// and the chosen delimiter survive the redaction — env-var
+		// style (DATABASE_PASSWORD=...) stays readable as
+		// DATABASE_PASSWORD=REDACTED rather than being mangled to
+		// DATABASE_password: REDACTED. Case-insensitive match
+		// preserves the operator's writing convention.
+		Regex:       regexp.MustCompile(`(?i)(password\s*[:=]\s*)\S+`),
+		Replacement: "${1}REDACTED",
 	},
 }
 

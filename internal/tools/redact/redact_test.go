@@ -157,7 +157,7 @@ func TestSanitisePerPatternPositiveAndNegative(t *testing.T) {
 			name:        "slack_token_xoxb",
 			positive:    "tok=xoxb-1234567890-abcde-fghijk end",
 			negative:    "tok=xoxq-not-a-slack-shape end",
-			mustContain: "xox-…REDACTED",
+			mustContain: "xoxb-…REDACTED",
 		},
 		{
 			name:        "jwt",
@@ -190,7 +190,7 @@ func TestSanitisePerPatternPositiveAndNegative(t *testing.T) {
 			name:        "password_assignment_equals",
 			positive:    "DATABASE_PASSWORD=p@ssw0rd-1!",
 			negative:    "passwordy text",
-			mustContain: "password: REDACTED",
+			mustContain: "PASSWORD=REDACTED",
 		},
 	}
 
