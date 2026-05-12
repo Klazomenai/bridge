@@ -134,6 +134,11 @@ Where the rigging is dressed, every line in its place:
 - Domain: `domain:infra`, `domain:ai`, `domain:android`, `domain:matrix`,
   `domain:security`
 - Priority: `priority:high`, `priority:medium`, `priority:low`
+- Crew: `crew:chips`, `crew:maren`, `crew:crest`, `crew:bosun`,
+  `crew:lookout`. Apply when a specific crew member is the primary
+  subject of the issue or PR. Cross-cutting work (orchestrator, loader,
+  observability surfaces, build/CI) stays untagged — the label is for
+  per-persona signal, not for surfaces that touch every persona equally.
 - Override: `allow-coverage-drop` — applied to a PR that intentionally
   drops per-package test coverage (e.g. removing a tested code path
   during a refactor). The gate still runs and posts the coverage delta
