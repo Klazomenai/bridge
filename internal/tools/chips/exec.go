@@ -54,9 +54,10 @@ var SanitiseOutputForTest = sanitiseOutput
 //
 //  1. redact.Redact strips the known GITHUB_TOKEN value (substring
 //     replacement, callers supply the exact secret).
-//  2. Sanitise (this package) applies the shared redact.Patterns
-//     plus any chips-specific extras to catch token-shaped strings
-//     in untrusted comment / issue / PR bodies the operator never
+//  2. Sanitise (this package) applies the redact package default
+//     pattern set (obtained via redact.DefaultPatterns) plus any
+//     chips-specific extras to catch token-shaped strings in
+//     untrusted comment / issue / PR bodies the operator never
 //     supplied as a known secret (e.g. an AWS key pasted into a
 //     GitHub comment by a third party).
 //

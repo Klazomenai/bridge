@@ -186,11 +186,17 @@ func Sanitise(input string) string {
 // canonical pattern) so the underlying slice cannot be mutated by
 // downstream consumers and race with concurrent Sanitise calls.
 //
-// The returned slice is safe to mutate (append, reorder, modify
-// individual Patterns) without affecting Sanitise's behaviour for
-// other callers. Each call returns a fresh slice; do NOT cache the
-// return value if you intend to mutate it, or two consumers will
-// share the same backing array.
+// Each call returns an independent backing array — separate
+// DefaultPatterns calls do NOT share storage with each other or
+// with the unexported defaultPatterns. The returned slice is safe
+// to mutate (append, reorder, modify individual Patterns) without
+// affecting any other caller.
+//
+// The hazard to avoid is sharing a single mutated slice instance
+// across consumers (e.g. caching one DefaultPatterns() return in a
+// package-level var and letting two components append to it from
+// different code paths). If a consumer intends to mutate, it should
+// call DefaultPatterns afresh for its own copy.
 func DefaultPatterns() []Pattern {
 	out := make([]Pattern, len(defaultPatterns))
 	copy(out, defaultPatterns)
@@ -225,9 +231,15 @@ func SanitiseWith(input string, patterns []Pattern) (out string) {
 	}()
 
 	// Truncate INPUT before any pattern matching — guards against
-	// regex-DoS on attacker-controlled inputs.
+	// regex-DoS on attacker-controlled inputs. strings.Clone is
+	// load-bearing on the memory side of the cap: a bare
+	// `input[:Max]` slice retains the full original backing
+	// allocation via the string header's data pointer, so a 1 MiB
+	// attacker payload would stay alive in memory for as long as
+	// the truncated string did. Clone forces a fresh 64 KiB
+	// allocation and lets the original be GC'd.
 	if origLen > MaxSanitiserInputBytes {
-		input = input[:MaxSanitiserInputBytes]
+		input = strings.Clone(input[:MaxSanitiserInputBytes])
 	}
 
 	out = input
@@ -244,9 +256,12 @@ func SanitiseWith(input string, patterns []Pattern) (out string) {
 	// preserves the byte-budget invariant for downstream consumers
 	// (notably the orchestrator-level safety floor in #129, which
 	// chains another Sanitise pass and benefits from a known upper
-	// bound on its own input size).
+	// bound on its own input size). Clone for the same memory-defence
+	// reason as the input path: a pre-truncation `out` longer than
+	// the cap stays alive via the truncated slice's backing pointer
+	// otherwise.
 	if len(out) > MaxSanitiserInputBytes {
-		out = out[:MaxSanitiserInputBytes]
+		out = strings.Clone(out[:MaxSanitiserInputBytes])
 	}
 	return out
 }
