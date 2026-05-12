@@ -49,10 +49,20 @@ func (a RepoAllowlist) Check(org, repo string) error {
 // SanitiseOutputForTest is an exported alias for testing.
 var SanitiseOutputForTest = sanitiseOutput
 
-// sanitiseOutput strips the GITHUB_TOKEN value from output if present.
-// Thin wrapper over redact.Redact so existing chips call sites keep
-// their two-argument shape; the package-level redactor is shared with
-// the audit-log path (sandbox.go).
+// sanitiseOutput chains two redaction primitives on every gh_* /
+// git_* tool output:
+//
+//  1. redact.Redact strips the known GITHUB_TOKEN value (substring
+//     replacement, callers supply the exact secret).
+//  2. Sanitise (this package) applies the shared redact.Patterns
+//     plus any chips-specific extras to catch token-shaped strings
+//     in untrusted comment / issue / PR bodies the operator never
+//     supplied as a known secret (e.g. an AWS key pasted into a
+//     GitHub comment by a third party).
+//
+// The order is deliberate: known-secret substring replacement is
+// cheap and always-correct, so it runs first; pattern-based
+// detection is a regex pass under a length cap and runs second.
 func sanitiseOutput(output, token string) string {
-	return redact.Redact(output, token)
+	return Sanitise(redact.Redact(output, token))
 }
