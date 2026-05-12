@@ -12,14 +12,13 @@ import "klazomenai/bridge/internal/tools/redact"
 var chipsPatterns = []redact.Pattern{}
 
 // allChipsPatterns returns the combined Sanitiser pattern set used by
-// Sanitise: the shared redact.Patterns followed by chipsPatterns.
-// Constructed per-call so that tests reordering or shadowing the
-// underlying slices do not produce stale composite state.
+// Sanitise: the shared redact default patterns followed by
+// chipsPatterns. Constructed per-call via redact.DefaultPatterns so
+// chips cannot accidentally mutate the package default set, and so
+// tests reordering or shadowing the underlying slices do not produce
+// stale composite state.
 func allChipsPatterns() []redact.Pattern {
-	out := make([]redact.Pattern, 0, len(redact.Patterns)+len(chipsPatterns))
-	out = append(out, redact.Patterns...)
-	out = append(out, chipsPatterns...)
-	return out
+	return append(redact.DefaultPatterns(), chipsPatterns...)
 }
 
 // Sanitise applies the shared redact patterns plus any Chips-specific

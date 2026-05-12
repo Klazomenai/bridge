@@ -29,12 +29,14 @@ import (
 // Sentinel is the replacement string substituted for each redacted secret.
 const Sentinel = "[REDACTED]"
 
-// MaxSanitiserInputBytes is the upper byte length Sanitise will process.
-// Inputs longer than this are truncated to this length before pattern
-// matching begins. The cap defends against regex-DoS amplification on
-// attacker-controlled bodies — a pathological 1 MB comment costs
-// len(Patterns) × 65 KB regex passes, not len(Patterns) × 1 MB, no
-// matter how many patterns are added to the default set later.
+// MaxSanitiserInputBytes is the upper byte length Sanitise will process
+// (64 KiB exactly = 65 536 bytes). Inputs longer than this are
+// truncated to this length before pattern matching begins. The cap
+// defends against regex-DoS amplification on attacker-controlled
+// bodies: pattern-matching cost is bounded to N × 64 KiB regex
+// passes (N = number of patterns in the default set) rather than
+// N × original-input-size, regardless of how many patterns are added
+// later.
 //
 // Truncation may split a multi-byte UTF-8 rune at the boundary; the
 // resulting trailing invalid byte is harmless under Go's regexp (which
@@ -66,17 +68,20 @@ type Pattern struct {
 	Replacement string
 }
 
-// Patterns is the shared default Sanitiser pattern set. Order is
-// significant only when two patterns could match overlapping input;
-// the broader patterns (bearer, password) come last to give the
-// narrower token-shape patterns first opportunity.
+// defaultPatterns is the shared default Sanitiser pattern set,
+// unexported so external consumers cannot mutate it (append, reorder,
+// modify) and race with concurrent Sanitise calls. Use DefaultPatterns
+// to obtain a defensive copy.
 //
-// Adding a pattern here makes it apply to every consumer of
-// Sanitise (chips, crest, maren, the orchestrator-level safety floor).
-// For per-crew patterns that should NOT apply elsewhere, declare a
-// local []Pattern slice in the consumer's package and call
-// SanitiseWith.
-var Patterns = []Pattern{
+// Order is significant only when two patterns could match overlapping
+// input; the broader patterns (bearer, password) come last to give
+// the narrower token-shape patterns first opportunity.
+//
+// Adding a pattern here makes it apply to every consumer of Sanitise
+// (chips, crest, maren, the orchestrator-level safety floor). For
+// per-crew patterns that should NOT apply elsewhere, declare a local
+// []Pattern slice in the consumer's package and call SanitiseWith.
+var defaultPatterns = []Pattern{
 	{
 		Name:        "aws_access_key",
 		Regex:       regexp.MustCompile(`AKIA[0-9A-Z]{16}`),
@@ -168,11 +173,28 @@ func Redact(input string, secrets ...string) string {
 	return input
 }
 
-// Sanitise runs the shared Patterns set over input. Inputs longer
-// than MaxSanitiserInputBytes are truncated before pattern matching.
-// See SanitiseWith for the failure-mode contract.
+// Sanitise runs the package default pattern set over input. Inputs
+// longer than MaxSanitiserInputBytes are truncated before pattern
+// matching. See SanitiseWith for the failure-mode contract.
 func Sanitise(input string) string {
-	return SanitiseWith(input, Patterns)
+	return SanitiseWith(input, defaultPatterns)
+}
+
+// DefaultPatterns returns a defensive copy of the shared default
+// pattern set applied by Sanitise. Use this when composing the
+// default set with per-crew extras (see chips.Sanitise for the
+// canonical pattern) so the underlying slice cannot be mutated by
+// downstream consumers and race with concurrent Sanitise calls.
+//
+// The returned slice is safe to mutate (append, reorder, modify
+// individual Patterns) without affecting Sanitise's behaviour for
+// other callers. Each call returns a fresh slice; do NOT cache the
+// return value if you intend to mutate it, or two consumers will
+// share the same backing array.
+func DefaultPatterns() []Pattern {
+	out := make([]Pattern, len(defaultPatterns))
+	copy(out, defaultPatterns)
+	return out
 }
 
 // SanitiseWith runs the supplied pattern set over input with the same

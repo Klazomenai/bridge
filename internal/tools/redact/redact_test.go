@@ -355,6 +355,43 @@ func TestSanitiseWithCustomPattern(t *testing.T) {
 	}
 }
 
+func TestDefaultPatternsReturnsDefensiveCopy(t *testing.T) {
+	// Without the defensive copy, mutating the returned slice would
+	// permanently change the package default — accidental append in
+	// an init() somewhere could break sanitisation for all callers,
+	// and concurrent reads against a mutated slice can race.
+	copy1 := redact.DefaultPatterns()
+	copy2 := redact.DefaultPatterns()
+
+	if len(copy1) == 0 {
+		t.Fatal("DefaultPatterns returned empty slice; the default set must have at least one pattern")
+	}
+	if len(copy1) != len(copy2) {
+		t.Fatalf("DefaultPatterns calls returned different lengths: %d vs %d",
+			len(copy1), len(copy2))
+	}
+
+	// Mutate copy1[0] in place. The Pattern struct fields (Name,
+	// Replacement) are value-copied by the make+copy sequence, so
+	// this must not affect copy2 OR the internal default set.
+	original := copy1[0]
+	copy1[0] = redact.Pattern{Name: "MUTATED", Replacement: "MUTATED"}
+
+	if copy2[0].Name != original.Name {
+		t.Errorf("DefaultPatterns returned shared backing slice: copy1 mutation affected copy2 (%q != %q)",
+			copy2[0].Name, original.Name)
+	}
+
+	// Sanitise must still behave per the pre-mutation default set.
+	// Pick a fixture that exercises the first default pattern
+	// (AKIA) so this catches both backing-array sharing and any
+	// stale-pointer issues.
+	out := redact.Sanitise("planted AKIATESTKEY012345678 here")
+	if !strings.Contains(out, "AKIA…REDACTED") {
+		t.Errorf("Sanitise was disturbed by DefaultPatterns copy mutation: %q", out)
+	}
+}
+
 func TestSanitiserConstantsAreLoadBearing(t *testing.T) {
 	// These constants are part of the public contract (referenced by
 	// chips, the orchestrator floor #129, and future per-crew

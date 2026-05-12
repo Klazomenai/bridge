@@ -119,8 +119,14 @@ func TestChipsSanitiseRespectsSharedMaxBytes(t *testing.T) {
 func TestSanitiseOutputChainKnownTokenStillRedacted(t *testing.T) {
 	// Regression assertion for the original #152 contract: when a
 	// known GITHUB_TOKEN value is supplied, it is substring-redacted
-	// to the [REDACTED] sentinel regardless of pattern shape.
-	token := "ghp_thisIsNotAValidPatternMatchTokenButCallerKnowsIt"
+	// to the [REDACTED] sentinel by redact.Redact's first pass, even
+	// when the value's shape does not match any default Sanitise
+	// pattern. The token below contains `-` characters inside the
+	// `ghp_` body, which falls outside the github_token pattern's
+	// `[A-Za-z0-9]{36,}` character class — so the substring path is
+	// the only mechanism that can catch it. Asserts the chain's
+	// first stage in isolation.
+	token := "ghp_known-test-secret-with-dashes-only-substring-catches-it"
 	out := chips.SanitiseOutputForTest("emit "+token+" and stop", token)
 	if strings.Contains(out, token) {
 		t.Errorf("known token surfaced: %q", out)
