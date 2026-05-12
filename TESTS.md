@@ -43,62 +43,50 @@ github profile addenda have all required H2 sections, and no SKILL.md
 references `_universal.md` (the asymmetric reference graph the redesign
 deliberately rejected).
 
-## L1 — Bridge unit tests
+## L1 — Bridge unit tests (migrated)
 
-Tests against today's vendored skill-content path (the `id == "chips"`
-gate in `internal/crew/registry.go`). These tests will migrate to
-`compose_test.go` once the Source/Compose loader rewrite (#148) lands.
+The pre-Compose vendored skill-content path is gone — the `id == "chips"`
+gate, the `//go:embed skills/github.md` directive, and the
+`chipsGitHubSkill` var all deleted in PR #161 (sub-issue **d** of #148).
+Tests migrated to the Compose path:
 
-Run:
+| Test | Status | Asserts |
+|------|--------|---------|
+| `TestChipsSystemPromptContainsGitHubSkill` | ✅ migrated | 10 load-bearing rule fragments survive Compose (`--gpg-sign`, `Refs #N`, `NEVER push to "main"`, etc.); boundary literal updated from the legacy `\n\n## Git + GitHub Workflow Rules` to Compose's emitted `\n\n## Github Workflow Rules\n` heading. Lives in `internal/crew/registry_test.go`. |
+| `TestNonChipsCrewLackGitHubSkill` | ✅ migrated | Same gating intent under the `skills: []` field in `crew.yaml`. Maren / Crest / Bosun / Lookout don't declare `skills:`, so Compose emits persona+verbosity only and the `Copilot Review Workflow` sentinel is absent from their SystemPrompt. |
 
-```sh
-CGO_ENABLED=0 go test -tags goolm ./internal/crew/...
-```
+## L2 — Composition + tool-loop enforcement (implemented)
 
-Covered today:
-
-| Test | What it covers | Migration target |
-|------|----------------|------------------|
-| `TestChipsSystemPromptContainsGitHubSkill` | 10 load-bearing rule fragments survive embedding (`--gpg-sign`, `Refs #N`, `NEVER push to main`, etc.) plus the `\n\n## Git + GitHub Workflow Rules` boundary marker. | `compose_test.go` after #148 — fragments stay; boundary literal updates to match `Compose`'s emitted heading. |
-| `TestNonChipsCrewLackGitHubSkill` | Embedding is gated to Chips — Maren / Crest / Bosun / Lookout must not see the github content. | Same gating intent under the new `skills: []` field in `crew.yaml`. |
-
-The test bodies carry `// TODO(#148):` comments flagging the migration
-intent so the assertions don't get accidentally deleted or re-written
-during the loader refactor.
-
-## L2 — Composition + tool-loop enforcement (pending #148)
-
-Tests the new Source/Compose plumbing AND the orchestrator's
-enforcement layer. **Pending Bridge #148** — these test files don't
-exist yet; the table below is the planned shape.
+The new Source/Compose plumbing AND the orchestrator's enforcement
+layer. **Implemented** across sub-issues **a–d** of #148 (PRs #156,
+#157+#158, #159+#160, #161, #165). All assertions run on every CI run.
 
 The architecture's value is in the *negative* tests: writes refuse
 non-allowlisted repos, mutations require operator intent in the most
 recent message, `gh pr merge` / `gh pr ready` aren't even registered
-as callable, audit trails redact tokens. L2 proves these claims fire.
+as callable, audit trails redact tokens.
 
-Planned files: `internal/crew/skills/compose_test.go`,
-`internal/crew/skills/loader_test.go` (matching the `loader.go` source
-file that hosts the `Source` interface + three implementations), plus
-extensions to `internal/crew/registry_test.go` and
-`internal/orchestrator/orchestrator_test.go`.
-
-| Planned test | Asserts |
-|--------------|---------|
-| `TestComposeOrderUniversalThenSkillThenProfile` | Composition order: universal → skill → profile, exact whitespace boundaries |
-| `TestComposeMissingProfileFallsThrough` | Skills without a profile addendum compose as universal+skill |
-| `TestComposeMissingUniversalIsError` | Universal is mandatory; missing → load-time error |
-| `TestFallbackSourceUsesEmbeddedWhenFilesystemMissing` | `FilesystemSource` ENOENT → `EmbeddedSource` content |
-| `TestEmbeddedSourceContainsAllSkillsListedInCrewYAML` | Drift check: `crew.yaml` `skills:` entries all have embedded blobs |
-| `TestChipsPromptContainsUniversalRules` | "fail-closed", "operator's most recent message", "audit record", "Refused outright" present |
-| `TestChipsPromptContainsGitHubProfileRules` | "must not be exposed as callable tools", "draft baked in", "NEVER autonomously resolve Copilot" present |
-| `TestChipsPromptDoesNotContainOperatorOnlyContent` | Operator-only sentinel absent from agent-consumed prompt |
-| `TestChipsRefusesNonAllowlistedRepo` | Mock Anthropic emits `tool_use` against non-allowlisted target → orchestrator allowlist gate fires before tool `Execute()` |
-| `TestChipsRefusesMutationWithoutOperatorIntent` | Mutation not in operator's most recent message → refusal |
-| `TestGhPrMergeNotRegistered` | `tools.Registry.Has("gh_pr_merge")` and `gh_pr_ready` return `false` |
-| `TestPendingConfirmationExceptionAccepts` | Two-turn: "close issue #99" → "confirm?" → "yes" → write proceeds |
-| `TestAuditRecordEmittedOnWrite` | Write tool invocation produces audit record on stderr / captured `io.Writer` |
-| `TestAuditRecordRedactsTokens` | Token-bearing argv → audit line shows `***REDACTED***` |
+| Test | File | Asserts |
+|------|------|---------|
+| `TestComposeOrderUniversalThenSkillThenProfile` | `internal/crew/skills/compose_test.go` | Composition order: persona → universal → skill → profile, exact whitespace boundaries |
+| `TestComposeBoundaryMarkers` | `internal/crew/skills/compose_test.go` | Each section is preceded by `\n\n## <Heading>\n\n` |
+| `TestComposeMissingProfileFallsThrough` | `internal/crew/skills/compose_test.go` | Skills without a profile addendum compose as persona+universal+skill |
+| `TestComposeMissingUniversalIsError` | `internal/crew/skills/compose_test.go` | Universal is mandatory when any skill is declared; missing → wrapped `ErrUniversalRequired` |
+| `TestComposeMissingSkillIsError` | `internal/crew/skills/compose_test.go` | Missing SKILL.md → wrapped `ErrNotFound` |
+| `TestFallbackSourceUsesEmbeddedWhenFilesystemMissing` | `internal/crew/skills/loader_test.go` | `FilesystemSource` ENOENT → `EmbeddedSource` content |
+| `TestEmbeddedSourceUniversalContainsExpectedSentinel` | `internal/crew/skills/loader_test.go` | Embedded universal addendum carries a stable sentinel string |
+| `TestEmbeddedSourceGitHubSkillContainsExpectedSentinel` | `internal/crew/skills/loader_test.go` | Embedded github/SKILL.md carries a stable sentinel string |
+| `TestEmbeddedSourceGitHubProfileContainsExpectedSentinel` | `internal/crew/skills/loader_test.go` | Embedded github/profile.md carries a stable sentinel string |
+| `TestEmbeddedSourceContainsAllSkillsDeclaredInRealCrewYAML` | `internal/crew/registry_test.go` | Drift check: every `skills:` entry in `config/crew.yaml` has a resolvable blob in the embedded source |
+| `TestChipsPromptContainsUniversalRules` | `internal/crew/registry_test.go` | Sentinels: `Allowlist is fail-closed`, `Operator Intent Required`, `Refused outright`, `Pending-confirmation exception` present |
+| `TestChipsPromptContainsGitHubProfileRules` | `internal/crew/registry_test.go` | Sentinels: `must not be exposed as callable tools`, `NEVER autonomously resolve Copilot review threads`, `Refused outright` present |
+| `TestNonChipsCrewLackUniversal` | `internal/crew/registry_test.go` | The `## Operator Universal Rules` heading is absent from Maren / Crest / Bosun / Lookout SystemPrompts |
+| `TestChipsRefusesNonAllowlistedRepo` | `internal/orchestrator/orchestrator_test.go` | Mock Anthropic emits `tool_use` against non-allowlisted target → orchestrator wraps the tool's allowlist error as `is_error=true` tool_result before Claude sees it |
+| `TestChipsRefusesMutationWithoutOperatorIntent` | `internal/orchestrator/orchestrator_test.go` | Chips's SystemPrompt contains the Operator-Intent rule sentinel — the orchestrator sees the rule on every turn |
+| `TestPendingConfirmationExceptionAccepts` | `internal/orchestrator/orchestrator_test.go` | Two-turn: "close issue #99" → "confirm?" → "yes" → write proceeds, audit-log captures `"audit: tool invoked"` + `"mutation":true` |
+| `TestGhPrMergeNotRegistered` | `internal/tools/registry_test.go` | The production chips registry built via `chipstools.RegisterChipsTools` has `Has("gh_pr_merge") == false && Has("gh_pr_ready") == false`; the 7 expected chips tools ARE present |
+| `TestAuditRecordEmittedOnWrite` | `internal/tools/sandbox_test.go` | Mutation:true tool invocation emits structured audit record with the tool name, `mutation:true`, and `argv_redacted` field |
+| `TestAuditRecordRedactsTokens` | `internal/tools/sandbox_test.go` | Token-bearing argv → audit-log buffer contains `[REDACTED]`, not the raw token |
 
 L2's mock strategy: register a test-only mock tool via the existing
 `tools.Registry` interface. The allowlist gate, mutation-intent rule,
