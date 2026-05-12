@@ -13,7 +13,7 @@ DOTFILES_DIR ?= ../dotfiles
 EMBEDDED_DIR := internal/crew/skills/embedded
 
 help: ## Show available targets
-	@awk 'BEGIN { FS = ":.*?## " } /^[a-zA-Z_-]+:.*?## / { printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
+	@awk 'BEGIN { FS = ":.*## " } /^[a-zA-Z_-]+:.*## / { printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
 
 sync-skills: ## Re-bundle $(EMBEDDED_DIR)/ from a sibling dotfiles checkout
 	@test -d "$(DOTFILES_DIR)" || { \

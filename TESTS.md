@@ -74,7 +74,9 @@ as callable, audit trails redact tokens.
 | `TestComposeMissingUniversalIsError` | `internal/crew/skills/compose_test.go` | Universal is mandatory when any skill is declared; missing → wrapped `ErrUniversalRequired` |
 | `TestComposeMissingSkillIsError` | `internal/crew/skills/compose_test.go` | Missing SKILL.md → wrapped `ErrNotFound` |
 | `TestFallbackSourceUsesEmbeddedWhenFilesystemMissing` | `internal/crew/skills/loader_test.go` | `FilesystemSource` ENOENT → `EmbeddedSource` content |
-| `TestEmbeddedSource{Universal,GitHubSkill,GitHubProfile}ContainsExpectedSentinel` | `internal/crew/skills/loader_test.go` | Each embedded blob carries a stable sentinel string |
+| `TestEmbeddedSourceUniversalContainsExpectedSentinel` | `internal/crew/skills/loader_test.go` | Embedded universal addendum carries a stable sentinel string |
+| `TestEmbeddedSourceGitHubSkillContainsExpectedSentinel` | `internal/crew/skills/loader_test.go` | Embedded github/SKILL.md carries a stable sentinel string |
+| `TestEmbeddedSourceGitHubProfileContainsExpectedSentinel` | `internal/crew/skills/loader_test.go` | Embedded github/profile.md carries a stable sentinel string |
 | `TestEmbeddedSourceContainsAllSkillsDeclaredInRealCrewYAML` | `internal/crew/registry_test.go` | Drift check: every `skills:` entry in `config/crew.yaml` has a resolvable blob in the embedded source |
 | `TestChipsPromptContainsUniversalRules` | `internal/crew/registry_test.go` | Sentinels: `Allowlist is fail-closed`, `Operator Intent Required`, `Refused outright`, `Pending-confirmation exception` present |
 | `TestChipsPromptContainsGitHubProfileRules` | `internal/crew/registry_test.go` | Sentinels: `must not be exposed as callable tools`, `NEVER autonomously resolve Copilot review threads`, `Refused outright` present |
