@@ -53,6 +53,13 @@ func getLogger() *slog.Logger {
 // (Error) events. Returns a restore function that re-installs the
 // previous logger; defer the restore in tests.
 //
+// Passing nil resets the package back to slog.Default — this avoids
+// the failure mode where a caller-supplied nil logger would cause
+// getLogger to return nil and the next emission to panic inside the
+// recover handler itself, escaping the fail-closed guarantee. The
+// restore function returned for a nil call still rolls back to
+// whatever logger was installed before this call.
+//
 // Two intended use cases:
 //
 //  1. Test capture: install a logger backed by a bytes.Buffer
@@ -69,7 +76,11 @@ func SetLogger(l *slog.Logger) (restore func()) {
 	loggerMu.Lock()
 	defer loggerMu.Unlock()
 	prev := loggerGetter
-	loggerGetter = func() *slog.Logger { return l }
+	if l == nil {
+		loggerGetter = slog.Default
+	} else {
+		loggerGetter = func() *slog.Logger { return l }
+	}
 	return func() {
 		loggerMu.Lock()
 		defer loggerMu.Unlock()

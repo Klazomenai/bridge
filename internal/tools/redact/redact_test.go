@@ -546,6 +546,75 @@ func TestSanitiseNoLogLineWhenZeroMatches(t *testing.T) {
 	}
 }
 
+func TestSetLoggerNilResetsToDefault(t *testing.T) {
+	// SetLogger(nil) MUST treat the argument as a reset back to
+	// slog.Default — installing a nil logger would otherwise propagate
+	// to getLogger() and the next Sanitise emission would panic
+	// inside the recover handler itself, escaping the fail-closed
+	// guarantee that's the whole point of the recover.
+	restore := redact.SetLogger(nil)
+	defer restore()
+
+	defer func() {
+		if r := recover(); r != nil {
+			t.Errorf("Sanitise panicked after SetLogger(nil): %v", r)
+		}
+	}()
+	// Trigger both code paths that go through getLogger():
+	// (1) the per-pattern emission via Sanitise + attrs.
+	_ = redact.Sanitise("planted AKIATESTKEY012345678 here",
+		slog.String("tool", "x"),
+		slog.String("field", "y"),
+	)
+	// (2) the panic-recover emission inside SanitiseWith.
+	out := redact.SanitiseWith("anything", []redact.Pattern{
+		{Name: "nil_regex_panic", Regex: nil, Replacement: "x"},
+	},
+		slog.String("tool", "x"),
+		slog.String("field", "y"),
+	)
+	if out != redact.SanitiserErrorReplacement {
+		t.Errorf("expected fail-closed replacement after panic; got %q", out)
+	}
+}
+
+func TestSetLoggerRestoreUnwindsToPreviousLogger(t *testing.T) {
+	// Each SetLogger call returns a restore that rolls back to the
+	// logger installed at the moment of THAT call (not the original
+	// default). Nested install/restore unwinds in LIFO order; this
+	// matters when test helpers compose.
+	var first, second bytes.Buffer
+	firstLogger := slog.New(slog.NewJSONHandler(&first, nil))
+	secondLogger := slog.New(slog.NewJSONHandler(&second, nil))
+
+	restore1 := redact.SetLogger(firstLogger)
+	restore2 := redact.SetLogger(secondLogger)
+
+	// Emit while secondLogger is active → goes to `second`
+	_ = redact.Sanitise("a AKIATESTKEY012345678",
+		slog.String("tool", "x"), slog.String("field", "y"))
+	if first.Len() != 0 {
+		t.Errorf("first logger captured under second's install: %s", first.String())
+	}
+	if second.Len() == 0 {
+		t.Error("second logger captured nothing")
+	}
+
+	// Restore2 unwinds to firstLogger
+	restore2()
+	secondLenAtSwap := second.Len()
+	_ = redact.Sanitise("b AKIATESTKEY012345678",
+		slog.String("tool", "x"), slog.String("field", "y"))
+	if first.Len() == 0 {
+		t.Error("first logger received nothing after restore2")
+	}
+	if second.Len() != secondLenAtSwap {
+		t.Error("second logger still receiving after restore2")
+	}
+
+	restore1()
+}
+
 func TestSanitiserConstantsAreLoadBearing(t *testing.T) {
 	// These constants are part of the public contract (referenced by
 	// chips, the orchestrator floor #129, and future per-crew
