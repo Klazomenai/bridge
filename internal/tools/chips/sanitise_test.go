@@ -1,6 +1,8 @@
 package chips_test
 
 import (
+	"bytes"
+	"log/slog"
 	"strings"
 	"testing"
 
@@ -193,7 +195,7 @@ func TestSanitiseOutputChainKnownTokenStillRedacted(t *testing.T) {
 	// the only mechanism that can catch it. Asserts the chain's
 	// first stage in isolation.
 	token := "ghp_known-test-secret-with-dashes-only-substring-catches-it"
-	out := chips.SanitiseOutputForTest("emit "+token+" and stop", token)
+	out := chips.SanitiseOutputForTest("emit "+token+" and stop", token, "")
 	if strings.Contains(out, token) {
 		t.Errorf("known token surfaced: %q", out)
 	}
@@ -208,7 +210,7 @@ func TestSanitiseOutputChainPlantedTokenPatternRedacted(t *testing.T) {
 	// GitHub comment body) gets caught by pattern matching even though
 	// the caller passes an empty / different token.
 	planted := "AKIA" + strings.Repeat("Q", 16)
-	out := chips.SanitiseOutputForTest("attacker planted: "+planted+" here", "")
+	out := chips.SanitiseOutputForTest("attacker planted: "+planted+" here", "", "")
 	if strings.Contains(out, planted) {
 		t.Errorf("planted token surfaced: %q", out)
 	}
@@ -224,7 +226,7 @@ func TestSanitiseOutputChainBothPathsTogether(t *testing.T) {
 	token := "ghp_realOperatorTokenValueKnownLiterally"
 	planted := "AKIA" + strings.Repeat("J", 16)
 	in := "tool error: " + token + "\nissue body: " + planted + "\n"
-	out := chips.SanitiseOutputForTest(in, token)
+	out := chips.SanitiseOutputForTest(in, token, "")
 	if strings.Contains(out, token) {
 		t.Errorf("known token surfaced: %q", out)
 	}
@@ -239,12 +241,67 @@ func TestSanitiseOutputChainBothPathsTogether(t *testing.T) {
 	}
 }
 
+func TestSanitiseOutputThreadsToolNameToLogWhenSet(t *testing.T) {
+	// AC10 (#83): production callers in gh_*.go / git_*.go pass
+	// t.Name() as the third arg to sanitiseOutput. The log line for
+	// each pattern match must carry that tool name in the `tool`
+	// attribute (operators trace per-tool redaction frequency from
+	// Loki without needing to correlate via timestamps).
+	var buf bytes.Buffer
+	original := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{
+		Level: slog.LevelInfo,
+	})))
+	defer slog.SetDefault(original)
+
+	planted := "AKIA" + strings.Repeat("Q", 16)
+	_ = chips.SanitiseOutputForTest("leaked "+planted+" here", "", "gh_issue_view")
+
+	logOut := buf.String()
+	if !strings.Contains(logOut, `"tool":"gh_issue_view"`) {
+		t.Errorf("expected tool=gh_issue_view in log, got: %s", logOut)
+	}
+	if !strings.Contains(logOut, `"field":"output"`) {
+		t.Errorf("expected field=output in log, got: %s", logOut)
+	}
+	if !strings.Contains(logOut, `"pattern_name":"aws_access_key"`) {
+		t.Errorf("expected pattern_name=aws_access_key in log, got: %s", logOut)
+	}
+}
+
+func TestSanitiseOutputSilentWhenToolNameEmpty(t *testing.T) {
+	// Test/SanitiseOutputForTest callers pass tool="" — sanitisation
+	// runs but no slog line is emitted. Pins that tests don't
+	// pollute production log output AND that empty tool string is
+	// a safe no-log signal (not a tool literally named "").
+	var buf bytes.Buffer
+	original := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{
+		Level: slog.LevelInfo,
+	})))
+	defer slog.SetDefault(original)
+
+	planted := "AKIA" + strings.Repeat("Q", 16)
+	out := chips.SanitiseOutputForTest("leaked "+planted+" here", "", "")
+
+	if buf.Len() != 0 {
+		t.Errorf("expected silent sanitisation with empty tool, got log: %s",
+			buf.String())
+	}
+	// Sanity check: redaction still happened (the absence of the
+	// raw planted token in `out` proves the silent path still
+	// applies the patterns).
+	if strings.Contains(out, planted) {
+		t.Errorf("silent path did not sanitise: %q", out)
+	}
+}
+
 func TestSanitiseOutputChainEmptyTokenStillSanitisesPatterns(t *testing.T) {
 	// Pre-#83 behaviour: empty token meant no substring redaction
 	// happened. Post-#83: pattern-based Sanitise still runs even when
 	// the caller has no known secret to redact.
 	in := "comment: ghp_" + strings.Repeat("M", 40) + " end"
-	out := chips.SanitiseOutputForTest(in, "")
+	out := chips.SanitiseOutputForTest(in, "", "")
 	if !strings.Contains(out, "ghp_…REDACTED") {
 		t.Errorf("expected pattern sentinel with empty token: %q", out)
 	}

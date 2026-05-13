@@ -60,5 +60,5 @@ func (t *GHPRChecksTool) Execute(ctx context.Context, input json.RawMessage) (st
 	if err != nil {
 		return "", fmt.Errorf("gh pr checks: %w", err)
 	}
-	return sanitiseOutput(string(out), t.token), nil
+	return sanitiseOutput(string(out), t.token, t.Name()), nil
 }

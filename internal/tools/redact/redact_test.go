@@ -1,12 +1,27 @@
 package redact_test
 
 import (
+	"bytes"
+	"log/slog"
 	"regexp"
 	"strings"
 	"testing"
 
 	"klazomenai/bridge/internal/tools/redact"
 )
+
+// captureSlog replaces the default slog logger with one that writes
+// JSON to a buffer, returning the buffer and a restore function. Use
+// `defer restore()` in tests that need to assert on log output.
+func captureSlog(t *testing.T) (*bytes.Buffer, func()) {
+	t.Helper()
+	var buf bytes.Buffer
+	original := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{
+		Level: slog.LevelInfo,
+	})))
+	return &buf, func() { slog.SetDefault(original) }
+}
 
 func TestRedactSingleSecretReplaced(t *testing.T) {
 	out := redact.Redact("token=ghp_abc123 user=root", "ghp_abc123")
@@ -433,6 +448,91 @@ func TestDefaultPatternsReturnsDefensiveCopy(t *testing.T) {
 	out := redact.Sanitise("planted AKIATESTKEY012345678 here")
 	if !strings.Contains(out, "AKIA…REDACTED") {
 		t.Errorf("Sanitise was disturbed by DefaultPatterns copy mutation: %q", out)
+	}
+}
+
+func TestSanitiseEmitsLogPerPatternMatchWithAttrs(t *testing.T) {
+	// AC10 (#83): each pattern that fires emits one slog.Info line
+	// with the caller's attrs (tool + field) plus pattern_name +
+	// count. Two distinct patterns + 2 AWS matches + 1 GH token match
+	// produces exactly 2 log lines (one per pattern), with counts 2
+	// and 1 respectively.
+	buf, restore := captureSlog(t)
+	defer restore()
+
+	in := "leaked AKIATESTKEY012345678 and AKIATESTKEY999999999 and tok ghp_" +
+		strings.Repeat("A", 40) + " end"
+	_ = redact.Sanitise(in,
+		slog.String("tool", "test_tool"),
+		slog.String("field", "output"),
+	)
+
+	logOut := buf.String()
+	if !strings.Contains(logOut, `"tool":"test_tool"`) {
+		t.Errorf("expected tool attr in log, got: %s", logOut)
+	}
+	if !strings.Contains(logOut, `"field":"output"`) {
+		t.Errorf("expected field attr in log, got: %s", logOut)
+	}
+	if !strings.Contains(logOut, `"pattern_name":"aws_access_key"`) {
+		t.Errorf("expected aws_access_key pattern_name in log, got: %s", logOut)
+	}
+	if !strings.Contains(logOut, `"pattern_name":"github_token"`) {
+		t.Errorf("expected github_token pattern_name in log, got: %s", logOut)
+	}
+	if !strings.Contains(logOut, `"count":2`) {
+		t.Errorf("expected count=2 for two AWS matches, got: %s", logOut)
+	}
+	if !strings.Contains(logOut, `"count":1`) {
+		t.Errorf("expected count=1 for one GH token match, got: %s", logOut)
+	}
+	if !strings.Contains(logOut, `"msg":"sanitiser_redaction"`) {
+		t.Errorf("expected sanitiser_redaction msg in log, got: %s", logOut)
+	}
+
+	// Critical: the matched values themselves MUST NOT appear in the
+	// log output (would defeat the purpose of redacting them).
+	if strings.Contains(logOut, "AKIATESTKEY012345678") {
+		t.Error("raw AWS key leaked into log output")
+	}
+	if strings.Contains(logOut, strings.Repeat("A", 40)) {
+		t.Error("raw GH token leaked into log output")
+	}
+}
+
+func TestSanitiseSilentWhenNoLogAttrs(t *testing.T) {
+	// AC10 (#83) inverse: no log attrs → no emission. The
+	// orchestrator-level safety floor (#129) and existing callers
+	// that pre-date logging stay silent so they don't double-log
+	// every redaction event.
+	buf, restore := captureSlog(t)
+	defer restore()
+
+	in := "leaked AKIATESTKEY012345678 and ghp_" + strings.Repeat("Z", 40)
+	_ = redact.Sanitise(in) // no log attrs
+
+	if buf.Len() != 0 {
+		t.Errorf("expected silent sanitisation with no attrs, got log output: %s",
+			buf.String())
+	}
+}
+
+func TestSanitiseNoLogLineWhenZeroMatches(t *testing.T) {
+	// Even with attrs provided, a pattern that finds no matches must
+	// not emit a log line — log entries should map 1:1 to patterns
+	// that actually fired (avoids noise when sanitising benign text).
+	buf, restore := captureSlog(t)
+	defer restore()
+
+	in := "completely benign text with no token shapes whatsoever"
+	_ = redact.Sanitise(in,
+		slog.String("tool", "test_tool"),
+		slog.String("field", "output"),
+	)
+
+	if buf.Len() != 0 {
+		t.Errorf("expected no log entries when zero patterns matched, got: %s",
+			buf.String())
 	}
 }
 

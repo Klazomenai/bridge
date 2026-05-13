@@ -1,6 +1,10 @@
 package chips
 
-import "klazomenai/bridge/internal/tools/redact"
+import (
+	"log/slog"
+
+	"klazomenai/bridge/internal/tools/redact"
+)
 
 // chipsPatterns holds Chips-specific Sanitiser rules that supplement
 // the shared redact default pattern set (obtained via
@@ -26,11 +30,16 @@ func allChipsPatterns() []redact.Pattern {
 // additions to input. Fail-closed: any internal panic returns
 // redact.SanitiserErrorReplacement (see redact.SanitiseWith).
 //
+// Optional logAttrs are passed through to redact.SanitiseWith and
+// emit one slog.Info line per matched pattern (with pattern_name +
+// count). Callers in the gh_* / git_* tool layer (see sanitiseOutput
+// in exec.go) pass `tool` and `field` attrs; tests and the
+// orchestrator-level safety floor in #129 pass none and stay silent.
+//
 // This is the per-tool first line of defence applied at every gh_*
-// tool's output boundary (see sanitiseOutput in exec.go). The
-// orchestrator-level safety floor (issue #129) applies the same
-// shared patterns again to every tool_result regardless of which
-// tool produced it.
-func Sanitise(input string) string {
-	return redact.SanitiseWith(input, allChipsPatterns())
+// tool's output boundary. The orchestrator-level safety floor (issue
+// #129) applies the same shared patterns again to every tool_result
+// regardless of which tool produced it.
+func Sanitise(input string, logAttrs ...slog.Attr) string {
+	return redact.SanitiseWith(input, allChipsPatterns(), logAttrs...)
 }

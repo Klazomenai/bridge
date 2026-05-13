@@ -66,5 +66,5 @@ func (t *GitDiffTool) Execute(ctx context.Context, input json.RawMessage) (strin
 	if err != nil {
 		return "", fmt.Errorf("git diff: %w", err)
 	}
-	return sanitiseOutput(string(out), t.token), nil
+	return sanitiseOutput(string(out), t.token, t.Name()), nil
 }

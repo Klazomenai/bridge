@@ -4,6 +4,7 @@ package chips
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os/exec"
 	"strings"
 
@@ -64,6 +65,19 @@ var SanitiseOutputForTest = sanitiseOutput
 // The order is deliberate: known-secret substring replacement is
 // cheap and always-correct, so it runs first; pattern-based
 // detection is a regex pass under a length cap and runs second.
-func sanitiseOutput(output, token string) string {
-	return Sanitise(redact.Redact(output, token))
+//
+// When tool is non-empty, every pattern match in step 2 emits one
+// slog.Info "sanitiser_redaction" line tagged with `tool` (the
+// caller's Tool.Name(), e.g. "gh_issue_view") and `field=output`.
+// Tests pass tool="" to stay silent; production callers pass
+// t.Name().
+func sanitiseOutput(output, token, tool string) string {
+	cleaned := redact.Redact(output, token)
+	if tool == "" {
+		return Sanitise(cleaned)
+	}
+	return Sanitise(cleaned,
+		slog.String("tool", tool),
+		slog.String("field", "output"),
+	)
 }

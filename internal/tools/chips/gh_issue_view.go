@@ -60,5 +60,5 @@ func (t *GHIssueViewTool) Execute(ctx context.Context, input json.RawMessage) (s
 	if err != nil {
 		return "", fmt.Errorf("gh issue view: %w", err)
 	}
-	return sanitiseOutput(string(out), t.token), nil
+	return sanitiseOutput(string(out), t.token, t.Name()), nil
 }

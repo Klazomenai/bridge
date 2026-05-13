@@ -20,6 +20,7 @@
 package redact
 
 import (
+	"context"
 	"log/slog"
 	"regexp"
 	"sort"
@@ -175,9 +176,10 @@ func Redact(input string, secrets ...string) string {
 
 // Sanitise runs the package default pattern set over input. Inputs
 // longer than MaxSanitiserInputBytes are truncated before pattern
-// matching. See SanitiseWith for the failure-mode contract.
-func Sanitise(input string) string {
-	return SanitiseWith(input, defaultPatterns)
+// matching. See SanitiseWith for the failure-mode contract and the
+// attribution-logging contract.
+func Sanitise(input string, logAttrs ...slog.Attr) string {
+	return SanitiseWith(input, defaultPatterns, logAttrs...)
 }
 
 // DefaultPatterns returns a defensive copy of the shared default
@@ -224,7 +226,16 @@ func DefaultPatterns() []Pattern {
 // an slog.Error line is emitted with the panic value and the input
 // byte length (NOT the input itself — leaking a suspected-toxic
 // payload into logs would defeat the redaction).
-func SanitiseWith(input string, patterns []Pattern) (out string) {
+//
+// Attribution logging: when logAttrs is non-empty, every pattern
+// that matches at least once emits a single slog.Info line at the
+// "sanitiser_redaction" message with the caller's attrs (typically
+// `tool` and `field`) plus `pattern_name` (which pattern fired) and
+// `count` (how many matches were replaced). The matched text itself
+// is NEVER logged — leaking redacted content would defeat the
+// purpose. When logAttrs is empty (the default), no logging occurs
+// and the regex matching cost stays at one pass per pattern.
+func SanitiseWith(input string, patterns []Pattern, logAttrs ...slog.Attr) (out string) {
 	// Capture the original length BEFORE truncation so a deferred
 	// panic log reflects the actual payload size that crashed the
 	// sanitiser, not the post-truncation slice length. Useful for
@@ -257,7 +268,26 @@ func SanitiseWith(input string, patterns []Pattern) (out string) {
 
 	out = input
 	for _, p := range patterns {
+		// Attribution logging path: count matches BEFORE replacement
+		// so the log line reflects the real redaction events. Skipped
+		// entirely when logAttrs is empty to keep the no-log path at
+		// one regex pass per pattern (the FindAllStringIndex below
+		// would otherwise double the cost).
+		var matchCount int
+		if len(logAttrs) > 0 {
+			matchCount = len(p.Regex.FindAllStringIndex(out, -1))
+		}
 		out = p.Regex.ReplaceAllString(out, p.Replacement)
+		if matchCount > 0 {
+			allAttrs := make([]slog.Attr, 0, len(logAttrs)+2)
+			allAttrs = append(allAttrs, logAttrs...)
+			allAttrs = append(allAttrs,
+				slog.String("pattern_name", p.Name),
+				slog.Int("count", matchCount),
+			)
+			slog.LogAttrs(context.Background(), slog.LevelInfo,
+				"sanitiser_redaction", allAttrs...)
+		}
 	}
 
 	// Truncate OUTPUT to the same cap. Some pattern replacements run
