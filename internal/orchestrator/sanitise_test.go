@@ -1,6 +1,7 @@
 package orchestrator_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -18,6 +19,23 @@ import (
 	"klazomenai/bridge/internal/tools"
 	"klazomenai/bridge/internal/tools/redact"
 )
+
+// captureSlogForOrch routes redact's "sanitiser_redaction" emissions
+// to a buffer via redact.SetLogger so per-call-site tests can prove
+// the orchestrator floor actually invoked the helper at each
+// NewToolResultBlock site. The orchestrator's own slog calls go to
+// slog.Default and are NOT captured here — the buffer holds only
+// floor emissions plus any panic-recovery line, keeping assertions
+// scoped.
+func captureSlogForOrch(t *testing.T) (*bytes.Buffer, func()) {
+	t.Helper()
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{
+		Level: slog.LevelInfo,
+	}))
+	restore := redact.SetLogger(logger)
+	return &buf, restore
+}
 
 // configurableOutputTool returns a fixed string regardless of input.
 // Used by sanitiser-floor tests that need specific output shapes
@@ -211,6 +229,221 @@ func TestOrchestrator_SanitiseLengthCeilingAtBoundary(t *testing.T) {
 	if len(out) > redact.MaxSanitiserInputBytes {
 		t.Errorf("orchestrator floor did not truncate oversized input: got %d bytes, cap %d",
 			len(out), redact.MaxSanitiserInputBytes)
+	}
+}
+
+// TestOrchestrator_FloorAppliedToAllowlistRefusalPath pins that the
+// "tool not in crew allowlist" branch (the first NewToolResultBlock
+// site in executeToolCalls) also runs through sanitiseToolResultContent.
+// Constructed by having Claude request a tool whose Name is itself a
+// token-shape string: the orchestrator-built error message
+// `tool "AKIATESTKEY012345678" not allowed for this crew member`
+// contains an AWS-shape literal, so the floor matches, redacts, and
+// emits a `sanitiser_redaction` line tagged with that tool name. The
+// assertions cover both the visible-content side (tool_result sent to
+// Claude carries the sentinel, not the raw token) and the floor-
+// emission side (the slog line proves the helper actually fired at
+// this call site, not just that the code path doesn't crash).
+func TestOrchestrator_FloorAppliedToAllowlistRefusalPath(t *testing.T) {
+	buf, restore := captureSlogForOrch(t)
+	defer restore()
+
+	const leakyToolName = "AKIATESTKEY012345678"
+	leakyTool := &configurableOutputTool{name: leakyToolName, output: "irrelevant"}
+
+	// Maren's allowlist is [delegate_to_crew] only — leakyToolName
+	// is registered but NOT authorised, so path 1 fires.
+	crewYAML := `
+default_crew: maren
+crew:
+  maren:
+    name: "Maren"
+    role: "Shipwright"
+    model: "claude-sonnet-4-6"
+    verbosity: dispatch
+    tools: [delegate_to_crew]
+    voice:
+      model: "en_GB-cori-high.onnx"
+      announces_as: "Maren:"
+    system_prompt: "You are Maren. Respond in {verbosity}"
+`
+	f := filepath.Join(t.TempDir(), "crew.yaml")
+	if err := os.WriteFile(f, []byte(crewYAML), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	reg, err := crew.Load(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	toolReg := newToolRegistry(leakyTool)
+	mgr := ctxbuf.NewManager(ctxbuf.DefaultMaxTurns)
+	mock := &mockClaudeClient{responses: []*anthropic.Message{
+		toolUseResponse("tu_1", leakyToolName, json.RawMessage(`{}`)),
+		textResponse("Got the error."),
+	}}
+	o := orchestrator.NewWithClient(reg, mgr, toolReg, mock)
+
+	if _, err := o.Handle(t.Context(), "!room:server", "try leaky", "maren"); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	// (1) Floor emission proves the helper ran at the allowlist-refusal site.
+	logOut := buf.String()
+	if !strings.Contains(logOut, `"msg":"sanitiser_redaction"`) {
+		t.Errorf("expected floor emission in log, got: %s", logOut)
+	}
+	if !strings.Contains(logOut, `"layer":"orchestrator_floor"`) {
+		t.Errorf("expected layer=orchestrator_floor in log, got: %s", logOut)
+	}
+	if !strings.Contains(logOut, `"tool":"`+leakyToolName+`"`) {
+		t.Errorf("expected tool=%s in log, got: %s", leakyToolName, logOut)
+	}
+
+	// (2) Tool-result content sent back to Claude carries the
+	//     sentinel, not the raw token.
+	content := extractToolResultText(t, mock)
+	if strings.Contains(content, leakyToolName) {
+		t.Errorf("raw tool-name token surfaced in tool_result: %q", content)
+	}
+	if !strings.Contains(content, "AKIA…REDACTED") {
+		t.Errorf("expected AKIA…REDACTED in tool_result, got: %q", content)
+	}
+	// And isError=true is preserved (the floor doesn't touch the
+	// error flag, only the content string).
+	secondCall := mock.calls[1]
+	tr := secondCall.Messages[len(secondCall.Messages)-1].Content[0].OfToolResult
+	if !tr.IsError.Value {
+		t.Error("expected isError=true on allowlist-refusal result")
+	}
+}
+
+// TestOrchestrator_FloorAppliedToUnknownToolPath pins that the
+// "unknown tool" branch (the second NewToolResultBlock site)
+// constructs its error message through sanitiseToolResultContent.
+// Setup: the crew's allowlist DECLARES a token-shape tool name, but
+// that tool is NOT registered — so the allowlist check passes and
+// the registry lookup fails, hitting path 2. The constructed error
+// `tool error: unknown tool: "AKIATESTKEY012345678"` contains the
+// AWS-shape literal which the floor redacts.
+func TestOrchestrator_FloorAppliedToUnknownToolPath(t *testing.T) {
+	buf, restore := captureSlogForOrch(t)
+	defer restore()
+
+	const leakyToolName = "AKIATESTKEY012345678"
+
+	crewYAML := fmt.Sprintf(`
+default_crew: maren
+crew:
+  maren:
+    name: "Maren"
+    role: "Shipwright"
+    model: "claude-sonnet-4-6"
+    verbosity: dispatch
+    tools: [%s]
+    voice:
+      model: "en_GB-cori-high.onnx"
+      announces_as: "Maren:"
+    system_prompt: "You are Maren. Respond in {verbosity}"
+`, leakyToolName)
+	f := filepath.Join(t.TempDir(), "crew.yaml")
+	if err := os.WriteFile(f, []byte(crewYAML), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	reg, err := crew.Load(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Empty tool registry — the named tool is allowlisted but not registered.
+	toolReg := newToolRegistry()
+	mgr := ctxbuf.NewManager(ctxbuf.DefaultMaxTurns)
+	mock := &mockClaudeClient{responses: []*anthropic.Message{
+		toolUseResponse("tu_1", leakyToolName, json.RawMessage(`{}`)),
+		textResponse("Got the unknown-tool error."),
+	}}
+	o := orchestrator.NewWithClient(reg, mgr, toolReg, mock)
+
+	if _, err := o.Handle(t.Context(), "!room:server", "try ghost", "maren"); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	logOut := buf.String()
+	if !strings.Contains(logOut, `"msg":"sanitiser_redaction"`) {
+		t.Errorf("expected floor emission, got: %s", logOut)
+	}
+	if !strings.Contains(logOut, `"layer":"orchestrator_floor"`) {
+		t.Errorf("expected layer=orchestrator_floor, got: %s", logOut)
+	}
+	if !strings.Contains(logOut, `"tool":"`+leakyToolName+`"`) {
+		t.Errorf("expected tool=%s, got: %s", leakyToolName, logOut)
+	}
+
+	content := extractToolResultText(t, mock)
+	if strings.Contains(content, leakyToolName) {
+		t.Errorf("raw tool-name token surfaced: %q", content)
+	}
+	if !strings.Contains(content, "AKIA…REDACTED") {
+		t.Errorf("expected AKIA…REDACTED, got: %q", content)
+	}
+	secondCall := mock.calls[1]
+	tr := secondCall.Messages[len(secondCall.Messages)-1].Content[0].OfToolResult
+	if !tr.IsError.Value {
+		t.Error("expected isError=true on unknown-tool result")
+	}
+}
+
+// TestOrchestrator_FloorAppliedToDelegationSentinelPath pins that
+// the "Delegating to ..." sentinel string (the third
+// NewToolResultBlock site) also passes through
+// sanitiseToolResultContent. The delegation path returns early from
+// runToolLoop without making a second API call (the loopResult's
+// turns hold the tool_result locally until the delegated crew runs),
+// so the proof of the floor having executed is the slog emission —
+// captured via redact.SetLogger.
+//
+// Setup: Maren's delegate_to_crew tool emits a sentinel pointing to
+// a target crew named with a github_token shape. DelegateTool.Execute
+// applies strings.ToLower to the crew name (line 55 of delegate.go)
+// which rules out the case-sensitive AWS pattern; github_token is
+// case-sensitive on the `ghp_` prefix but lowercase by default, so
+// the post-lowercasing form still matches. The unknown target crew
+// falls back to default routing (mirroring TestDelegationToUnknownCrewFallsToDefault).
+func TestOrchestrator_FloorAppliedToDelegationSentinelPath(t *testing.T) {
+	buf, restore := captureSlogForOrch(t)
+	defer restore()
+
+	// 44-char fixture: ghp_ + 40 lowercase chars. Survives ToLower,
+	// matches the github_token pattern's {36,} minimum.
+	leakyCrew := "ghp_" + strings.Repeat("a", 40)
+	delegateInput := json.RawMessage(fmt.Sprintf(`{"crew":"%s","context":"go"}`, leakyCrew))
+
+	// Maren delegates to the token-shape crew (unknown → falls back).
+	toolReg := newToolRegistry(&echoTool{})
+	o, _ := newTestOrchestrator(t, toolReg,
+		toolUseWithTextResponse("delegating", "tu_1", "delegate_to_crew", delegateInput),
+		textResponse("got it"), // fallback default-crew response
+	)
+
+	if _, err := o.Handle(t.Context(), "!room:server", "try delegate", "maren"); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	logOut := buf.String()
+	if !strings.Contains(logOut, `"msg":"sanitiser_redaction"`) {
+		t.Errorf("expected floor emission for delegation path, got: %s", logOut)
+	}
+	if !strings.Contains(logOut, `"layer":"orchestrator_floor"`) {
+		t.Errorf("expected layer=orchestrator_floor, got: %s", logOut)
+	}
+	// The block.Name for delegation is delegate_to_crew, NOT the target
+	// crew. That's the orchestrator's invariant — the floor's tool
+	// attribution identifies which tool produced the tool_result, not
+	// which crew was being delegated to.
+	if !strings.Contains(logOut, `"tool":"delegate_to_crew"`) {
+		t.Errorf("expected tool=delegate_to_crew, got: %s", logOut)
+	}
+	// And the github_token pattern from the leaky crew name fired.
+	if !strings.Contains(logOut, `"pattern_name":"github_token"`) {
+		t.Errorf("expected pattern_name=github_token, got: %s", logOut)
 	}
 }
 
