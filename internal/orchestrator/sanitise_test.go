@@ -20,21 +20,37 @@ import (
 	"klazomenai/bridge/internal/tools/redact"
 )
 
-// captureSlogForOrch routes redact's "sanitiser_redaction" emissions
-// to a buffer via redact.SetLogger so per-call-site tests can prove
-// the orchestrator floor actually invoked the helper at each
-// NewToolResultBlock site. The orchestrator's own slog calls go to
-// slog.Default and are NOT captured here — the buffer holds only
-// floor emissions plus any panic-recovery line, keeping assertions
-// scoped.
+// captureSlogForOrch routes BOTH redact's "sanitiser_redaction"
+// emissions (via redact.SetLogger) AND the orchestrator's own
+// slog.Default emissions to a single JSON buffer. Tests inspect
+// both surfaces:
+//
+//   - redact's floor emissions prove (or rule out) the floor fired.
+//   - the orchestrator's own Warn/Info emissions are where
+//     model-supplied identifiers (tool names, target crews) reach
+//     log infrastructure. The path-1 / path-2 / path-3 tests assert
+//     no raw token leaks via either surface.
+//
+// slog.SetDefault is process-global. Within a Go test binary the
+// tests run sequentially (no t.Parallel() in this file), and the
+// deferred restore unwinds the mutation; the slog.SetDefault hazard
+// Copilot flagged in #170 round-8 was a cross-package concern that
+// doesn't apply here since each go-test package binary is its own
+// process. The redact side still uses redact.SetLogger, so the same
+// principle holds: package-local, sequential, defer-restored.
 func captureSlogForOrch(t *testing.T) (*bytes.Buffer, func()) {
 	t.Helper()
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{
 		Level: slog.LevelInfo,
 	}))
-	restore := redact.SetLogger(logger)
-	return &buf, restore
+	restoreRedact := redact.SetLogger(logger)
+	originalDefault := slog.Default()
+	slog.SetDefault(logger)
+	return &buf, func() {
+		slog.SetDefault(originalDefault)
+		restoreRedact()
+	}
 }
 
 // configurableOutputTool returns a fixed string regardless of input.
@@ -287,30 +303,25 @@ crew:
 		t.Fatalf("Handle: %v", err)
 	}
 
-	// (1) Floor emission proves the helper ran at the allowlist-refusal site.
+	// (1) The orchestrator's OWN "tool not in crew allowlist" Warn
+	//     line must NOT contain the raw model-supplied tool name.
+	//     The orchestrator pre-sanitises block.Name once at the top
+	//     of this branch and reuses the sanitised form for both the
+	//     Warn log and the tool_result content; the raw token shape
+	//     is therefore never given to a logging surface.
 	logOut := buf.String()
-	if !strings.Contains(logOut, `"msg":"sanitiser_redaction"`) {
-		t.Errorf("expected floor emission in log, got: %s", logOut)
-	}
-	if !strings.Contains(logOut, `"layer":"orchestrator_floor"`) {
-		t.Errorf("expected layer=orchestrator_floor in log, got: %s", logOut)
-	}
-	// The `tool` slog attribute is itself Sanitise'd before emission
-	// — block.Name on this path is model-supplied and could itself
-	// be a token shape, so the raw name MUST NOT surface in the
-	// floor's own attribution log even though the content was
-	// redacted (Copilot-flagged regression: without this sanitise,
-	// the floor would leak in the log what it just redacted from the
-	// tool_result content).
 	if strings.Contains(logOut, leakyToolName) {
-		t.Errorf("raw tool-name token surfaced in floor's own slog attribution: %s", logOut)
+		t.Errorf("raw tool-name token surfaced in slog output: %s", logOut)
+	}
+	if !strings.Contains(logOut, `"msg":"orchestrator: tool not in crew allowlist"`) {
+		t.Errorf("expected orchestrator allowlist Warn line, got: %s", logOut)
 	}
 	if !strings.Contains(logOut, `"tool":"AKIA…REDACTED"`) {
-		t.Errorf("expected tool=AKIA…REDACTED in log (sanitised form), got: %s", logOut)
+		t.Errorf("expected sanitised tool name in slog, got: %s", logOut)
 	}
 
-	// (2) Tool-result content sent back to Claude carries the
-	//     sentinel, not the raw token.
+	// (2) The tool_result content sent back to Claude also carries
+	//     the sanitised form (same pre-sanitisation, same name).
 	content := extractToolResultText(t, mock)
 	if strings.Contains(content, leakyToolName) {
 		t.Errorf("raw tool-name token surfaced in tool_result: %q", content)
@@ -318,8 +329,8 @@ crew:
 	if !strings.Contains(content, "AKIA…REDACTED") {
 		t.Errorf("expected AKIA…REDACTED in tool_result, got: %q", content)
 	}
-	// And isError=true is preserved (the floor doesn't touch the
-	// error flag, only the content string).
+	// isError=true preserved (pre-sanitisation only touches the name
+	// string; the error flag is untouched).
 	secondCall := mock.calls[1]
 	tr := secondCall.Messages[len(secondCall.Messages)-1].Content[0].OfToolResult
 	if !tr.IsError.Value {
@@ -376,21 +387,20 @@ crew:
 		t.Fatalf("Handle: %v", err)
 	}
 
-	logOut := buf.String()
-	if !strings.Contains(logOut, `"msg":"sanitiser_redaction"`) {
-		t.Errorf("expected floor emission, got: %s", logOut)
-	}
-	if !strings.Contains(logOut, `"layer":"orchestrator_floor"`) {
-		t.Errorf("expected layer=orchestrator_floor, got: %s", logOut)
-	}
 	// Same regression check as the allowlist-refusal path: the
-	// model-supplied tool name MUST NOT appear in the floor's
-	// attribution log; the `tool` attr is Sanitise'd first.
+	// model-supplied tool name MUST NOT appear in the orchestrator's
+	// own "unknown tool requested" Warn log; block.Name is pre-
+	// sanitised once and reused for both the Warn log and the
+	// tool_result content.
+	logOut := buf.String()
 	if strings.Contains(logOut, leakyToolName) {
-		t.Errorf("raw tool-name token surfaced in floor's own slog attribution: %s", logOut)
+		t.Errorf("raw tool-name token surfaced in slog output: %s", logOut)
+	}
+	if !strings.Contains(logOut, `"msg":"orchestrator: unknown tool requested"`) {
+		t.Errorf("expected orchestrator unknown-tool Warn line, got: %s", logOut)
 	}
 	if !strings.Contains(logOut, `"tool":"AKIA…REDACTED"`) {
-		t.Errorf("expected tool=AKIA…REDACTED (sanitised), got: %s", logOut)
+		t.Errorf("expected sanitised tool name in slog, got: %s", logOut)
 	}
 
 	content := extractToolResultText(t, mock)
@@ -443,23 +453,36 @@ func TestOrchestrator_FloorAppliedToDelegationSentinelPath(t *testing.T) {
 		t.Fatalf("Handle: %v", err)
 	}
 
+	// The orchestrator's "delegation requested" slog.Info line
+	// receives the pre-sanitised target crew name (the same
+	// safeTarget is also used in the tool_result construction). The
+	// raw model-supplied targetCrew must not appear in this line.
+	//
+	// Note: orchestrator.go's downstream "following delegation" and
+	// "unknown crew member, falling back to default" lines still log
+	// the raw targetCrew — those are outside #129's scope and
+	// tracked as follow-up work. The buffer here may legitimately
+	// contain the raw form on those lines; the assertion is
+	// specifically scoped to the toolloop.go "delegation requested"
+	// emission.
 	logOut := buf.String()
-	if !strings.Contains(logOut, `"msg":"sanitiser_redaction"`) {
-		t.Errorf("expected floor emission for delegation path, got: %s", logOut)
+	if !strings.Contains(logOut, `"msg":"orchestrator: delegation requested"`) {
+		t.Errorf("expected orchestrator delegation Info line, got: %s", logOut)
 	}
-	if !strings.Contains(logOut, `"layer":"orchestrator_floor"`) {
-		t.Errorf("expected layer=orchestrator_floor, got: %s", logOut)
-	}
-	// The block.Name for delegation is delegate_to_crew, NOT the target
-	// crew. That's the orchestrator's invariant — the floor's tool
-	// attribution identifies which tool produced the tool_result, not
-	// which crew was being delegated to.
-	if !strings.Contains(logOut, `"tool":"delegate_to_crew"`) {
-		t.Errorf("expected tool=delegate_to_crew, got: %s", logOut)
-	}
-	// And the github_token pattern from the leaky crew name fired.
-	if !strings.Contains(logOut, `"pattern_name":"github_token"`) {
-		t.Errorf("expected pattern_name=github_token, got: %s", logOut)
+	// Scope: find the "delegation requested" line specifically and
+	// check it. Using simple JSON-as-text containment with both
+	// `msg` and `to` in the same line slice.
+	for _, line := range strings.Split(logOut, "\n") {
+		if !strings.Contains(line, `"msg":"orchestrator: delegation requested"`) {
+			continue
+		}
+		if strings.Contains(line, leakyCrew) {
+			t.Errorf("raw target-crew token surfaced in delegation-requested line: %s", line)
+		}
+		if !strings.Contains(line, `"to":"ghp_…REDACTED"`) {
+			t.Errorf("expected to=ghp_…REDACTED (sanitised) in delegation-requested line, got: %s", line)
+		}
+		break
 	}
 }
 
