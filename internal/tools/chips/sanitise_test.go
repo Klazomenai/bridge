@@ -135,7 +135,12 @@ func TestChipsSanitiseIdempotence(t *testing.T) {
 		"plain pr title",
 		"comment with AKIATESTKEY012345678 planted",
 		"long body ghp_" + strings.Repeat("A", 40) + " somewhere",
-		"Authorization: Bearer xyz-123",
+		// Bearer fixture matches the `{16,}` minimum so idempotence
+		// is actually exercised at the chips boundary; the earlier
+		// `Bearer xyz-123` shape was sub-cap and didn't trigger the
+		// pattern, making the double-pass assertion vacuous.
+		"Authorization: Bearer abc-123def-456-789-token-here",
+		"slack hook xoxb-1234567890-abcde-fghij in body",
 		"in env: DATABASE_PASSWORD=hunter2",
 	}
 	for _, in := range inputs {
@@ -241,18 +246,29 @@ func TestSanitiseOutputChainBothPathsTogether(t *testing.T) {
 	}
 }
 
+// captureSlogForChips installs a buffer-backed slog.Logger via
+// redact.SetLogger and returns the buffer plus a restore function.
+// Routing via redact.SetLogger keeps tests off slog.Default and
+// avoids any global-state hazard if future test runs adopt
+// t.Parallel() in this package.
+func captureSlogForChips(t *testing.T) (*bytes.Buffer, func()) {
+	t.Helper()
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{
+		Level: slog.LevelInfo,
+	}))
+	restore := redact.SetLogger(logger)
+	return &buf, restore
+}
+
 func TestSanitiseOutputThreadsToolNameToLogWhenSet(t *testing.T) {
 	// AC10 (#83): production callers in gh_*.go / git_*.go pass
 	// t.Name() as the third arg to sanitiseOutput. The log line for
 	// each pattern match must carry that tool name in the `tool`
 	// attribute (operators trace per-tool redaction frequency from
 	// Loki without needing to correlate via timestamps).
-	var buf bytes.Buffer
-	original := slog.Default()
-	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{
-		Level: slog.LevelInfo,
-	})))
-	defer slog.SetDefault(original)
+	buf, restore := captureSlogForChips(t)
+	defer restore()
 
 	planted := "AKIA" + strings.Repeat("Q", 16)
 	_ = chips.SanitiseOutputForTest("leaked "+planted+" here", "", "gh_issue_view")
@@ -274,12 +290,8 @@ func TestSanitiseOutputSilentWhenToolNameEmpty(t *testing.T) {
 	// runs but no slog line is emitted. Pins that tests don't
 	// pollute production log output AND that empty tool string is
 	// a safe no-log signal (not a tool literally named "").
-	var buf bytes.Buffer
-	original := slog.Default()
-	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{
-		Level: slog.LevelInfo,
-	})))
-	defer slog.SetDefault(original)
+	buf, restore := captureSlogForChips(t)
+	defer restore()
 
 	planted := "AKIA" + strings.Repeat("Q", 16)
 	out := chips.SanitiseOutputForTest("leaked "+planted+" here", "", "")

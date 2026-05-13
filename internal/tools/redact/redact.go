@@ -25,7 +25,57 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 )
+
+// loggerMu guards the swappable package-level logger function below.
+// Reads via getLogger are RLock-only and run on every Sanitise event;
+// writes via SetLogger Lock the mutex briefly. Per-process state —
+// `go test ./internal/...` runs each package as a separate binary so
+// there is no cross-package interference, and within-package tests
+// run sequentially by default. The mutex is defence against a future
+// caller adding t.Parallel() or running multiple sanitiser goroutines.
+var (
+	loggerMu     sync.RWMutex
+	loggerGetter = slog.Default
+)
+
+// getLogger returns the slog.Logger configured for sanitiser
+// emissions. Defaults to slog.Default; overridable via SetLogger.
+func getLogger() *slog.Logger {
+	loggerMu.RLock()
+	defer loggerMu.RUnlock()
+	return loggerGetter()
+}
+
+// SetLogger overrides the slog.Logger used to emit
+// "sanitiser_redaction" (Info) and "sanitiser panic recovered"
+// (Error) events. Returns a restore function that re-installs the
+// previous logger; defer the restore in tests.
+//
+// Two intended use cases:
+//
+//  1. Test capture: install a logger backed by a bytes.Buffer
+//     handler to assert on emission attrs without mutating
+//     slog.Default (which would race with other packages' tests
+//     under hypothetical parallel test execution).
+//  2. Production routing: operators who want sanitiser telemetry
+//     on a dedicated handler (separate file, different level
+//     threshold, structured handler) can install one at startup.
+//
+// Concurrent SetLogger and Sanitise calls are safe — the internal
+// mutex serialises writes against the RLock'd read path.
+func SetLogger(l *slog.Logger) (restore func()) {
+	loggerMu.Lock()
+	defer loggerMu.Unlock()
+	prev := loggerGetter
+	loggerGetter = func() *slog.Logger { return l }
+	return func() {
+		loggerMu.Lock()
+		defer loggerMu.Unlock()
+		loggerGetter = prev
+	}
+}
 
 // Sentinel is the replacement string substituted for each redacted secret.
 const Sentinel = "[REDACTED]"
@@ -245,11 +295,20 @@ func SanitiseWith(input string, patterns []Pattern, logAttrs ...slog.Attr) (out 
 
 	defer func() {
 		if r := recover(); r != nil {
-			slog.Error("sanitiser panic recovered",
-				"panic", r,
-				"input_bytes", origLen,
-				"truncated", origLen > MaxSanitiserInputBytes,
+			// Include caller-supplied attribution (tool/field) in the
+			// recover log so an operator triaging "which tool's
+			// sanitiser blew up?" can answer it from the log line
+			// alone, not by cross-referencing timestamps. The raw
+			// input is still NEVER logged (only its length).
+			recoverAttrs := make([]slog.Attr, 0, len(logAttrs)+3)
+			recoverAttrs = append(recoverAttrs, logAttrs...)
+			recoverAttrs = append(recoverAttrs,
+				slog.Any("panic", r),
+				slog.Int("input_bytes", origLen),
+				slog.Bool("truncated", origLen > MaxSanitiserInputBytes),
 			)
+			getLogger().LogAttrs(context.Background(), slog.LevelError,
+				"sanitiser panic recovered", recoverAttrs...)
 			out = SanitiserErrorReplacement
 		}
 	}()
@@ -268,16 +327,26 @@ func SanitiseWith(input string, patterns []Pattern, logAttrs ...slog.Attr) (out 
 
 	out = input
 	for _, p := range patterns {
-		// Attribution logging path: count matches BEFORE replacement
-		// so the log line reflects the real redaction events. Skipped
-		// entirely when logAttrs is empty to keep the no-log path at
-		// one regex pass per pattern (the FindAllStringIndex below
-		// would otherwise double the cost).
-		var matchCount int
-		if len(logAttrs) > 0 {
-			matchCount = len(p.Regex.FindAllStringIndex(out, -1))
+		if len(logAttrs) == 0 {
+			// Hot path (no attribution requested — orchestrator floor
+			// in #129, direct tests): single regex pass per pattern.
+			out = p.Regex.ReplaceAllString(out, p.Replacement)
+			continue
 		}
-		out = p.Regex.ReplaceAllString(out, p.Replacement)
+		// Attribution path: count matches and replace in a single
+		// outer scan via ReplaceAllStringFunc. The closure receives
+		// each matched substring; we re-apply the pattern inside it
+		// to honour capture-group replacements like `${1}_…REDACTED`,
+		// at a cost of O(|match|) per match. Total cost is
+		// O(|input|) + O(Σ|match|) rather than the 2×O(|input|) a
+		// separate FindAll+Replace would pay — important because
+		// every chips production call passes attrs, putting this
+		// branch on the hot path.
+		matchCount := 0
+		out = p.Regex.ReplaceAllStringFunc(out, func(match string) string {
+			matchCount++
+			return p.Regex.ReplaceAllString(match, p.Replacement)
+		})
 		if matchCount > 0 {
 			allAttrs := make([]slog.Attr, 0, len(logAttrs)+2)
 			allAttrs = append(allAttrs, logAttrs...)
@@ -285,7 +354,7 @@ func SanitiseWith(input string, patterns []Pattern, logAttrs ...slog.Attr) (out 
 				slog.String("pattern_name", p.Name),
 				slog.Int("count", matchCount),
 			)
-			slog.LogAttrs(context.Background(), slog.LevelInfo,
+			getLogger().LogAttrs(context.Background(), slog.LevelInfo,
 				"sanitiser_redaction", allAttrs...)
 		}
 	}

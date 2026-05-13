@@ -10,17 +10,19 @@ import (
 	"klazomenai/bridge/internal/tools/redact"
 )
 
-// captureSlog replaces the default slog logger with one that writes
-// JSON to a buffer, returning the buffer and a restore function. Use
-// `defer restore()` in tests that need to assert on log output.
+// captureSlog routes sanitiser emissions to a buffer via the
+// package-level redact.SetLogger swap (NOT slog.SetDefault, which
+// would mutate process-global state and could race with other
+// packages' tests under hypothetical parallel execution). Returns
+// the buffer and a restore function — defer the restore.
 func captureSlog(t *testing.T) (*bytes.Buffer, func()) {
 	t.Helper()
 	var buf bytes.Buffer
-	original := slog.Default()
-	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{
+	logger := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{
 		Level: slog.LevelInfo,
-	})))
-	return &buf, func() { slog.SetDefault(original) }
+	}))
+	restore := redact.SetLogger(logger)
+	return &buf, restore
 }
 
 func TestRedactSingleSecretReplaced(t *testing.T) {
@@ -236,7 +238,15 @@ func TestSanitiseIdempotence(t *testing.T) {
 		"plain text without secrets",
 		"AKIATESTKEY012345678 one",
 		"token=ghp_" + strings.Repeat("X", 40),
-		"Authorization: Bearer abc-123",
+		// Bearer fixture is 30 chars after `Bearer ` so it actually
+		// triggers the `{16,}` minimum and exercises the bearer
+		// redaction's idempotence (a sub-cap bearer like
+		// "Bearer abc-123" would skip the pattern entirely and the
+		// idempotence assertion would be vacuous).
+		"Authorization: Bearer abc-123def-456-789-token-here",
+		// Slack matches the `xox([baprs])-[A-Za-z0-9-]{10,}` shape;
+		// pins idempotence of the new capture-group replacement.
+		"slack tok=xoxb-1234567890-abcde-fghij end",
 		"password: hunter2",
 		"key=sk-ant-" + strings.Repeat("a", 40),
 		"jwt=eyJ-TEST-HEADER-PART.eyJ-TEST-PAYLOAD-PART.TEST-SIGNATURE-PART",
