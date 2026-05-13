@@ -295,8 +295,18 @@ crew:
 	if !strings.Contains(logOut, `"layer":"orchestrator_floor"`) {
 		t.Errorf("expected layer=orchestrator_floor in log, got: %s", logOut)
 	}
-	if !strings.Contains(logOut, `"tool":"`+leakyToolName+`"`) {
-		t.Errorf("expected tool=%s in log, got: %s", leakyToolName, logOut)
+	// The `tool` slog attribute is itself Sanitise'd before emission
+	// — block.Name on this path is model-supplied and could itself
+	// be a token shape, so the raw name MUST NOT surface in the
+	// floor's own attribution log even though the content was
+	// redacted (Copilot-flagged regression: without this sanitise,
+	// the floor would leak in the log what it just redacted from the
+	// tool_result content).
+	if strings.Contains(logOut, leakyToolName) {
+		t.Errorf("raw tool-name token surfaced in floor's own slog attribution: %s", logOut)
+	}
+	if !strings.Contains(logOut, `"tool":"AKIA…REDACTED"`) {
+		t.Errorf("expected tool=AKIA…REDACTED in log (sanitised form), got: %s", logOut)
 	}
 
 	// (2) Tool-result content sent back to Claude carries the
@@ -373,8 +383,14 @@ crew:
 	if !strings.Contains(logOut, `"layer":"orchestrator_floor"`) {
 		t.Errorf("expected layer=orchestrator_floor, got: %s", logOut)
 	}
-	if !strings.Contains(logOut, `"tool":"`+leakyToolName+`"`) {
-		t.Errorf("expected tool=%s, got: %s", leakyToolName, logOut)
+	// Same regression check as the allowlist-refusal path: the
+	// model-supplied tool name MUST NOT appear in the floor's
+	// attribution log; the `tool` attr is Sanitise'd first.
+	if strings.Contains(logOut, leakyToolName) {
+		t.Errorf("raw tool-name token surfaced in floor's own slog attribution: %s", logOut)
+	}
+	if !strings.Contains(logOut, `"tool":"AKIA…REDACTED"`) {
+		t.Errorf("expected tool=AKIA…REDACTED (sanitised), got: %s", logOut)
 	}
 
 	content := extractToolResultText(t, mock)

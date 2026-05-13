@@ -27,9 +27,22 @@ import (
 // Inherits the fail-closed, byte-cap, and clone-on-truncate contracts
 // from redact.SanitiseWith.
 func sanitiseToolResultContent(toolName, content string) string {
+	// The tool name on the allowlist-refusal and unknown-tool paths
+	// is model-supplied (block.Name from Claude's tool_use response)
+	// and is NOT validated against any registry — Claude can return
+	// any string as a tool name, including a token-shaped value. If
+	// the raw name were used as the slog `tool` attribute, the floor
+	// would redact the leak from the tool_result content but
+	// reintroduce it in its own attribution log. Apply Sanitise to
+	// the name first; for legitimate registered tool names
+	// (delegate_to_crew, gh_issue_view, ...) this is a no-op because
+	// no default pattern matches a typical tool name. The outer
+	// Sanitise on the content does the actual content redaction
+	// AND emits the slog line with the now-safe name attribute.
+	safeToolAttr := redact.Sanitise(toolName)
 	return redact.Sanitise(content,
 		slog.String("layer", "orchestrator_floor"),
-		slog.String("tool", toolName),
+		slog.String("tool", safeToolAttr),
 		slog.String("field", "tool_result"),
 	)
 }
