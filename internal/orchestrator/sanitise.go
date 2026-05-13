@@ -20,9 +20,9 @@ import (
 // means the per-tool layer either missed the shape or never ran (a
 // new tool author or a third-party tool integration that bypassed
 // the chips-style helper). In steady state with per-tool sanitisers
-// doing their job, this layer emits nothing — content reaching it is
-// already redacted, so FindAllStringIndex returns zero matches and
-// no slog line fires.
+// (and the orchestrator's pre-sanitise pass on path 1/2/3 error
+// strings) doing their job, this layer finds zero matches in its
+// input and emits nothing.
 //
 // Inherits the fail-closed, byte-cap, and clone-on-truncate contracts
 // from redact.SanitiseWith.

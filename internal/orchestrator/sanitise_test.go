@@ -250,16 +250,15 @@ func TestOrchestrator_SanitiseLengthCeilingAtBoundary(t *testing.T) {
 
 // TestOrchestrator_FloorAppliedToAllowlistRefusalPath pins that the
 // "tool not in crew allowlist" branch (the first NewToolResultBlock
-// site in executeToolCalls) also runs through sanitiseToolResultContent.
-// Constructed by having Claude request a tool whose Name is itself a
-// token-shape string: the orchestrator-built error message
-// `tool "AKIATESTKEY012345678" not allowed for this crew member`
-// contains an AWS-shape literal, so the floor matches, redacts, and
-// emits a `sanitiser_redaction` line tagged with that tool name. The
-// assertions cover both the visible-content side (tool_result sent to
-// Claude carries the sentinel, not the raw token) and the floor-
-// emission side (the slog line proves the helper actually fired at
-// this call site, not just that the code path doesn't crash).
+// site in executeToolCalls) handles a token-shape block.Name
+// without leaking it anywhere. Claude requests a tool whose Name is
+// a token shape (AKIA-pattern); the orchestrator pre-sanitises
+// block.Name once at the branch top and reuses the safe form for
+// both the "tool not in crew allowlist" Warn log AND the
+// tool_result content sent back to Claude. The floor's content scan
+// then finds zero patterns (content already contains AKIA…REDACTED)
+// and stays silent — assertions verify the raw name is absent from
+// the orchestrator's own Warn log AND from the tool_result block.
 func TestOrchestrator_FloorAppliedToAllowlistRefusalPath(t *testing.T) {
 	buf, restore := captureSlogForOrch(t)
 	defer restore()
@@ -339,13 +338,15 @@ crew:
 }
 
 // TestOrchestrator_FloorAppliedToUnknownToolPath pins that the
-// "unknown tool" branch (the second NewToolResultBlock site)
-// constructs its error message through sanitiseToolResultContent.
-// Setup: the crew's allowlist DECLARES a token-shape tool name, but
-// that tool is NOT registered — so the allowlist check passes and
-// the registry lookup fails, hitting path 2. The constructed error
-// `tool error: unknown tool: "AKIATESTKEY012345678"` contains the
-// AWS-shape literal which the floor redacts.
+// "unknown tool" branch (the second NewToolResultBlock site) also
+// handles a token-shape block.Name safely. Setup: the crew's
+// allowlist DECLARES a token-shape tool name, but the registry
+// doesn't have it — so the allowlist check passes and the registry
+// lookup fails, hitting path 2. Same pre-sanitise pattern as path 1:
+// safeName flows into both the Warn log AND the tool_result content,
+// so the raw model-supplied name never reaches either surface. The
+// floor's content scan sees AKIA…REDACTED (already safe) and stays
+// silent; assertions check raw-name absence on both surfaces.
 func TestOrchestrator_FloorAppliedToUnknownToolPath(t *testing.T) {
 	buf, restore := captureSlogForOrch(t)
 	defer restore()
