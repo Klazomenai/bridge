@@ -70,5 +70,5 @@ func (t *GHPRListTool) Execute(ctx context.Context, input json.RawMessage) (stri
 	if err != nil {
 		return "", fmt.Errorf("gh pr list: %w", err)
 	}
-	return sanitiseOutput(string(out), t.token), nil
+	return sanitiseOutput(string(out), t.token, t.Name()), nil
 }

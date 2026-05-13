@@ -4,6 +4,7 @@ package chips
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os/exec"
 	"strings"
 
@@ -49,10 +50,48 @@ func (a RepoAllowlist) Check(org, repo string) error {
 // SanitiseOutputForTest is an exported alias for testing.
 var SanitiseOutputForTest = sanitiseOutput
 
-// sanitiseOutput strips the GITHUB_TOKEN value from output if present.
-// Thin wrapper over redact.Redact so existing chips call sites keep
-// their two-argument shape; the package-level redactor is shared with
-// the audit-log path (sandbox.go).
-func sanitiseOutput(output, token string) string {
-	return redact.Redact(output, token)
+// sanitiseOutput chains two redaction primitives on every gh_* /
+// git_* tool output:
+//
+//  1. redact.Redact strips the known GITHUB_TOKEN value (substring
+//     replacement, callers supply the exact secret).
+//  2. Sanitise (this package) applies the redact package default
+//     pattern set (obtained via redact.DefaultPatterns) plus any
+//     chips-specific extras to catch token-shaped strings in
+//     untrusted comment / issue / PR bodies the operator never
+//     supplied as a known secret (e.g. an AWS key pasted into a
+//     GitHub comment by a third party).
+//
+// The order is deliberate: known-secret substring replacement is
+// cheap and always-correct, so it runs first; pattern-based
+// detection is a regex pass under a length cap and runs second.
+//
+// When tool is non-empty, every pattern match in step 2 emits one
+// slog.Info "sanitiser_redaction" line tagged with `tool` (the
+// caller's Tool.Name(), e.g. "gh_issue_view") and `field=output`.
+// Tests pass tool="" to stay silent; production callers pass
+// t.Name().
+//
+// Scope deviation from #83 AC body: the spec body says "Touch only
+// the *content* fields (issue.body, comment.body, review.body),
+// never structural fields (numbers, URLs, dates)." This function
+// runs the chain over the WHOLE `gh --json` stdout rather than
+// unmarshalling and walking specific content-field paths. The
+// patterns are narrow enough that numbers, dates, and non-token-
+// bearing URLs aren't matched in practice; in the one edge case
+// where the deviation matters (a URL query string containing
+// `?password=...`), the result is desirable redaction of a
+// secret-in-URL leak. Per-field walking was deemed unnecessary
+// complexity given the orchestrator-level safety floor in #129
+// will apply the same patterns whole-output downstream anyway.
+// Pinned in the #83 close-out discussion.
+func sanitiseOutput(output, token, tool string) string {
+	cleaned := redact.Redact(output, token)
+	if tool == "" {
+		return Sanitise(cleaned)
+	}
+	return Sanitise(cleaned,
+		slog.String("tool", tool),
+		slog.String("field", "output"),
+	)
 }

@@ -61,7 +61,7 @@ func TestParseRepoAllowlistEmpty(t *testing.T) {
 
 func TestSanitiseOutputStripsToken(t *testing.T) {
 	output := "some output with ghp_abc123secret in it"
-	result := chips.SanitiseOutputForTest(output, "ghp_abc123secret")
+	result := chips.SanitiseOutputForTest(output, "ghp_abc123secret", "")
 	if strings.Contains(result, "ghp_abc123secret") {
 		t.Error("output still contains token")
 	}
@@ -72,7 +72,7 @@ func TestSanitiseOutputStripsToken(t *testing.T) {
 
 func TestSanitiseOutputEmptyToken(t *testing.T) {
 	output := "safe output"
-	result := chips.SanitiseOutputForTest(output, "")
+	result := chips.SanitiseOutputForTest(output, "", "")
 	if result != output {
 		t.Errorf("expected unchanged output, got %q", result)
 	}

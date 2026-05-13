@@ -60,5 +60,5 @@ func (t *GHPRViewTool) Execute(ctx context.Context, input json.RawMessage) (stri
 	if err != nil {
 		return "", fmt.Errorf("gh pr view: %w", err)
 	}
-	return sanitiseOutput(string(out), t.token), nil
+	return sanitiseOutput(string(out), t.token, t.Name()), nil
 }
