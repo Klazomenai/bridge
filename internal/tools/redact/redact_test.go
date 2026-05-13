@@ -339,8 +339,9 @@ func TestSanitiseWithEmptyPatternsReturnsInputUnchanged(t *testing.T) {
 func TestSanitiseWithCustomPattern(t *testing.T) {
 	// Demonstrates the SanitiseWith extension surface: a per-crew
 	// pattern slice can be passed alongside or instead of the shared
-	// redact.Patterns. Used by per-crew Sanitisers (chips, crest,
-	// maren) to add their own surface-specific patterns.
+	// redact default pattern set (DefaultPatterns / Sanitise). Used
+	// by per-crew Sanitisers (chips, crest, maren) to add their own
+	// surface-specific patterns.
 	custom := []redact.Pattern{
 		{
 			Name:        "deck_chat_session",

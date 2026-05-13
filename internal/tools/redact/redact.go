@@ -187,16 +187,29 @@ func Sanitise(input string) string {
 // downstream consumers and race with concurrent Sanitise calls.
 //
 // Each call returns an independent backing array — separate
-// DefaultPatterns calls do NOT share storage with each other or
-// with the unexported defaultPatterns. The returned slice is safe
-// to mutate (append, reorder, modify individual Patterns) without
-// affecting any other caller.
+// DefaultPatterns calls do NOT share slice storage with each other
+// or with the unexported defaultPatterns. The returned slice is
+// safe to mutate at the slice level (append, reorder, drop, or
+// replace whole Pattern values) without affecting any other caller.
 //
-// The hazard to avoid is sharing a single mutated slice instance
-// across consumers (e.g. caching one DefaultPatterns() return in a
-// package-level var and letting two components append to it from
-// different code paths). If a consumer intends to mutate, it should
-// call DefaultPatterns afresh for its own copy.
+// CAVEAT — pointer sharing on Pattern.Regex: the Regex field is a
+// *regexp.Regexp pointer that IS shared with the unexported
+// defaultPatterns (only the Pattern struct values are copied, not
+// the regex instances). Do NOT call mutating methods on a returned
+// Pattern's Regex (notably Regexp.Longest, which changes match mode)
+// — that change races with concurrent Sanitise calls and silently
+// alters every other consumer's matching behaviour. To substitute
+// a pattern, REPLACE the Pattern struct in the slice
+// (mySlice[i] = Pattern{Name: ..., Regex: regexp.MustCompile(...),
+// Replacement: ...}) rather than mutating the existing pattern's
+// fields in place.
+//
+// The hazard to avoid at the slice level is sharing a single
+// mutated slice instance across consumers (e.g. caching one
+// DefaultPatterns return in a package-level var and letting two
+// components append to it from different code paths). If a consumer
+// intends to mutate, it should call DefaultPatterns afresh for its
+// own copy.
 func DefaultPatterns() []Pattern {
 	out := make([]Pattern, len(defaultPatterns))
 	copy(out, defaultPatterns)

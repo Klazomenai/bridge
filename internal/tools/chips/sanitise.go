@@ -3,12 +3,13 @@ package chips
 import "klazomenai/bridge/internal/tools/redact"
 
 // chipsPatterns holds Chips-specific Sanitiser rules that supplement
-// the shared redact.Patterns set. Empty today — the shared set covers
-// Chips' threat model (untrusted GitHub comment / issue / PR bodies
-// containing token-shaped strings). Reserved as an extension point
-// if a GitHub-specific shape arises that should NOT apply to other
-// crew (e.g. GitHub repo deploy keys with a shape distinct from any
-// other secret).
+// the shared redact default pattern set (obtained via
+// redact.DefaultPatterns at composition time). Empty today — the
+// shared set covers Chips' threat model (untrusted GitHub comment /
+// issue / PR bodies containing token-shaped strings). Reserved as an
+// extension point if a GitHub-specific shape arises that should NOT
+// apply to other crew (e.g. GitHub repo deploy keys with a shape
+// distinct from any other secret).
 var chipsPatterns = []redact.Pattern{}
 
 // allChipsPatterns returns the combined Sanitiser pattern set used by

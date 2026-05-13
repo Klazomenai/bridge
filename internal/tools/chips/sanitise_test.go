@@ -85,11 +85,15 @@ func TestChipsSanitiseIdempotence(t *testing.T) {
 	}
 }
 
-func TestChipsSanitiseFailClosedSurfaceMatchesRedact(t *testing.T) {
-	// Chips Sanitise delegates to redact.SanitiseWith, so the
-	// fail-closed contract is inherited. Verifying empty input is
-	// the smoke test that the wrapper does not introduce its own
-	// failure surface ahead of redact's recover.
+func TestChipsSanitiseEmptyInputUnchanged(t *testing.T) {
+	// Smoke test that the chips wrapper passes empty input through
+	// without introducing its own failure surface ahead of the
+	// redact-level recover. The fail-closed contract itself (panic
+	// recovery, SanitiserErrorReplacement substitution) is exercised
+	// in internal/tools/redact's TestSanitiseFailClosedOnPanic via
+	// a nil-regex Pattern injection through SanitiseWith — chips
+	// inherits that contract directly because allChipsPatterns
+	// composes a slice that ends up at the same SanitiseWith call.
 	if out := chips.Sanitise(""); out != "" {
 		t.Errorf("empty input altered: %q", out)
 	}
