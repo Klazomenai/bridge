@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"os/exec"
 	"strings"
 	"testing"
 
@@ -475,6 +477,89 @@ func TestTokenSanitisedInOutput(t *testing.T) {
 	}
 	if !strings.Contains(out, "[REDACTED]") {
 		t.Error("expected [REDACTED] in output")
+	}
+}
+
+// --- DefaultExecFnWithToken env injection ---
+//
+// These tests cover the production path established by bridge#141 +
+// the Copilot review on PR #174: the bridge loads GITHUB_TOKEN from
+// a mounted secret file (off os.Environ()) and injects it into each
+// gh subprocess via Cmd.Env. Pre-#174 this had been done implicitly
+// via env-var inheritance — once the file-mount lands, the env-var
+// is gone from the bridge and gh would run unauthenticated unless
+// we inject explicitly.
+
+func TestDefaultExecFnWithTokenInjectsGitHubToken(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("no /bin/sh on this host — skipping subprocess env check")
+	}
+	fn := chips.DefaultExecFnWithToken("ghp_test_injected_value")
+	out, err := fn(t.Context(), "sh", "-c", "printf %s \"$GITHUB_TOKEN\"")
+	if err != nil {
+		t.Fatalf("exec sh: %v", err)
+	}
+	if string(out) != "ghp_test_injected_value" {
+		t.Errorf("child saw GITHUB_TOKEN=%q, want ghp_test_injected_value", out)
+	}
+}
+
+func TestDefaultExecFnWithTokenEmptyTokenSkipsInjection(t *testing.T) {
+	// Empty token → ExecFn matches DefaultExecFn behaviour (no
+	// Cmd.Env override). If the parent has GITHUB_TOKEN set, the
+	// child inherits it; if not, the child sees empty.
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("no /bin/sh on this host — skipping subprocess env check")
+	}
+	// Clear parent env so the inheritance test is deterministic.
+	t.Setenv("GITHUB_TOKEN", "")
+	fn := chips.DefaultExecFnWithToken("")
+	out, err := fn(t.Context(), "sh", "-c", "printf %s \"$GITHUB_TOKEN\"")
+	if err != nil {
+		t.Fatalf("exec sh: %v", err)
+	}
+	if string(out) != "" {
+		t.Errorf("expected empty GITHUB_TOKEN with empty-token + cleared env, got %q", out)
+	}
+}
+
+func TestDefaultExecFnWithTokenDoesNotPolluteParentEnv(t *testing.T) {
+	// The whole point of the file-mount path is that the bridge's
+	// own os.Environ() does NOT contain GITHUB_TOKEN. The exec
+	// helper must inject into the child's Cmd.Env only — never
+	// os.Setenv into the parent. This test confirms by snapshotting
+	// the parent env before+after a subprocess call.
+	t.Setenv("GITHUB_TOKEN", "")
+	if v := os.Getenv("GITHUB_TOKEN"); v != "" {
+		t.Fatalf("test setup: GITHUB_TOKEN should be empty pre-call, got %q", v)
+	}
+
+	fn := chips.DefaultExecFnWithToken("ghp_must_not_leak_into_parent")
+	if _, err := fn(t.Context(), "true"); err != nil {
+		t.Fatalf("exec true: %v", err)
+	}
+
+	if v := os.Getenv("GITHUB_TOKEN"); v != "" {
+		t.Errorf("parent os.Environ() polluted by DefaultExecFnWithToken: GITHUB_TOKEN=%q", v)
+	}
+}
+
+func TestDefaultExecFnWithTokenAppendsRatherThanReplaces(t *testing.T) {
+	// Existing env vars (e.g. PATH) must reach the child, otherwise
+	// gh wouldn't find its dependencies. The helper appends to
+	// os.Environ() rather than building a fresh slice.
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("no /bin/sh on this host — skipping subprocess env check")
+	}
+	// Set a marker env var on the parent.
+	t.Setenv("BRIDGE_ENV_MARKER", "ok")
+	fn := chips.DefaultExecFnWithToken("ghp_irrelevant")
+	out, err := fn(t.Context(), "sh", "-c", "printf %s \"$BRIDGE_ENV_MARKER\"")
+	if err != nil {
+		t.Fatalf("exec sh: %v", err)
+	}
+	if string(out) != "ok" {
+		t.Errorf("child did not inherit parent env: BRIDGE_ENV_MARKER=%q", out)
 	}
 }
 

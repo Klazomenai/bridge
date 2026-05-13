@@ -172,9 +172,16 @@ func main() {
 	}
 	chipsRepoCSV := os.Getenv("CHIPS_REPO_ALLOWLIST")
 	if ghToken != "" && chipsRepoCSV != "" && hasExec("gh") && hasExec("git") {
+		// DefaultExecFnWithToken injects GITHUB_TOKEN into each gh
+		// subprocess's environment without putting the token in the
+		// bridge's own os.Environ(). This keeps the token out of
+		// /proc/<bridge-pid>/environ (the whole motivation for the
+		// #141 file-mount path) while still authenticating gh CLI
+		// calls — gh reads GITHUB_TOKEN from its env to talk to the
+		// GitHub API.
 		chipstools.RegisterChipsTools(
 			toolReg,
-			chipstools.DefaultExecFn(),
+			chipstools.DefaultExecFnWithToken(ghToken),
 			chipstools.ParseRepoAllowlist(chipsRepoCSV),
 			ghToken,
 		)

@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
 	"os/exec"
 	"strings"
 
@@ -17,9 +18,43 @@ import (
 type ExecFn func(ctx context.Context, name string, args ...string) ([]byte, error)
 
 // DefaultExecFn returns the production exec function using os/exec.
+// The child process inherits the parent's os.Environ() and gets no
+// extra env vars. Callers that need GITHUB_TOKEN authentication for
+// gh-CLI subprocesses should use DefaultExecFnWithToken instead.
 func DefaultExecFn() ExecFn {
 	return func(ctx context.Context, name string, args ...string) ([]byte, error) {
 		return exec.CommandContext(ctx, name, args...).Output()
+	}
+}
+
+// DefaultExecFnWithToken returns an ExecFn that injects
+// GITHUB_TOKEN into the child process's environment without
+// exposing the token in the bridge's own os.Environ(). This is the
+// production path when the token is loaded from a mounted secret
+// file rather than the bridge process's env (see
+// cmd/bridge/githubauth.go's LoadGitHubToken).
+//
+// The gh CLI reads GITHUB_TOKEN from its env to authenticate
+// against the GitHub API. Setting it only on the child cmd's Env
+// keeps the token off the bridge process — it doesn't appear in
+// /proc/<bridge-pid>/environ, but it DOES appear in
+// /proc/<gh-pid>/environ during the brief life of each gh
+// subprocess. That window is the minimum any env-passing
+// authentication scheme requires.
+//
+// Passing token="" returns an ExecFn that does NOT add GITHUB_TOKEN
+// to the child env (equivalent to DefaultExecFn). This matches the
+// existing "empty token → stub tools" gate in main.go: if a
+// reduce-confidence caller wires the token through this helper with
+// an empty value, the helper degrades to DefaultExecFn rather than
+// emitting an invalid `GITHUB_TOKEN=` env entry.
+func DefaultExecFnWithToken(token string) ExecFn {
+	return func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		cmd := exec.CommandContext(ctx, name, args...)
+		if token != "" {
+			cmd.Env = append(os.Environ(), "GITHUB_TOKEN="+token)
+		}
+		return cmd.Output()
 	}
 }
 
