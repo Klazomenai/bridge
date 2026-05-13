@@ -380,6 +380,13 @@ func TestDefaultPatternsReturnsDefensiveCopy(t *testing.T) {
 	// permanently change the package default — accidental append in
 	// an init() somewhere could break sanitisation for all callers,
 	// and concurrent reads against a mutated slice can race.
+	//
+	// The test mutates the aws_access_key pattern (located by name,
+	// not by index) so that adding/reordering patterns in the default
+	// set does not silently weaken this assertion: a future reorder
+	// would otherwise mutate a different pattern entry and the AKIA
+	// sanity-check below would still pass even if defensive copy
+	// were broken.
 	copy1 := redact.DefaultPatterns()
 	copy2 := redact.DefaultPatterns()
 
@@ -391,21 +398,38 @@ func TestDefaultPatternsReturnsDefensiveCopy(t *testing.T) {
 			len(copy1), len(copy2))
 	}
 
-	// Mutate copy1[0] in place. The Pattern struct fields (Name,
-	// Replacement) are value-copied by the make+copy sequence, so
-	// this must not affect copy2 OR the internal default set.
-	original := copy1[0]
-	copy1[0] = redact.Pattern{Name: "MUTATED", Replacement: "MUTATED"}
-
-	if copy2[0].Name != original.Name {
-		t.Errorf("DefaultPatterns returned shared backing slice: copy1 mutation affected copy2 (%q != %q)",
-			copy2[0].Name, original.Name)
+	findByName := func(slice []redact.Pattern, name string) (int, bool) {
+		for i, p := range slice {
+			if p.Name == name {
+				return i, true
+			}
+		}
+		return -1, false
 	}
 
-	// Sanitise must still behave per the pre-mutation default set.
-	// Pick a fixture that exercises the first default pattern
-	// (AKIA) so this catches both backing-array sharing and any
-	// stale-pointer issues.
+	idx1, ok := findByName(copy1, "aws_access_key")
+	if !ok {
+		t.Fatal("aws_access_key pattern not present in DefaultPatterns(); update the test fixture or restore the pattern")
+	}
+
+	// Mutate the located entry in copy1. The Pattern struct fields
+	// are value-copied by the make+copy sequence, so this must not
+	// affect copy2 OR the internal default set.
+	original := copy1[idx1]
+	copy1[idx1] = redact.Pattern{Name: "MUTATED", Replacement: "MUTATED"}
+
+	idx2, ok := findByName(copy2, "aws_access_key")
+	if !ok {
+		t.Fatal("aws_access_key pattern disappeared from copy2; DefaultPatterns calls disagree")
+	}
+	if copy2[idx2].Name != original.Name {
+		t.Errorf("DefaultPatterns returned shared backing slice: copy1 mutation affected copy2 (%q != %q)",
+			copy2[idx2].Name, original.Name)
+	}
+
+	// Sanitise must still behave per the pre-mutation default set —
+	// pin via the AKIA fixture that the internal aws_access_key
+	// pattern survived copy1's mutation.
 	out := redact.Sanitise("planted AKIATESTKEY012345678 here")
 	if !strings.Contains(out, "AKIA…REDACTED") {
 		t.Errorf("Sanitise was disturbed by DefaultPatterns copy mutation: %q", out)
