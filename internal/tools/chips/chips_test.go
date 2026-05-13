@@ -546,12 +546,15 @@ func TestDefaultExecFnWithTokenDoesNotPolluteParentEnv(t *testing.T) {
 
 func TestDefaultExecFnWithTokenAppendsRatherThanReplaces(t *testing.T) {
 	// Existing env vars (e.g. PATH) must reach the child, otherwise
-	// gh wouldn't find its dependencies. The helper appends to
-	// os.Environ() rather than building a fresh slice.
+	// gh wouldn't find its dependencies. The helper builds the
+	// child env by filtering the parent's gh-auth env vars and
+	// appending its own GITHUB_TOKEN — every other parent entry
+	// passes through unchanged.
 	if _, err := exec.LookPath("sh"); err != nil {
 		t.Skip("no /bin/sh on this host — skipping subprocess env check")
 	}
-	// Set a marker env var on the parent.
+	// Set a marker env var on the parent (NOT a gh-auth var, so it
+	// must survive the filter).
 	t.Setenv("BRIDGE_ENV_MARKER", "ok")
 	fn := chips.DefaultExecFnWithToken("ghp_irrelevant")
 	out, err := fn(t.Context(), "sh", "-c", "printf %s \"$BRIDGE_ENV_MARKER\"")
@@ -560,6 +563,58 @@ func TestDefaultExecFnWithTokenAppendsRatherThanReplaces(t *testing.T) {
 	}
 	if string(out) != "ok" {
 		t.Errorf("child did not inherit parent env: BRIDGE_ENV_MARKER=%q", out)
+	}
+}
+
+func TestDefaultExecFnWithTokenFiltersPreExistingGHToken(t *testing.T) {
+	// gh CLI gives GH_TOKEN precedence over GITHUB_TOKEN. A stray
+	// GH_TOKEN in the bridge's env (operator misconfiguration,
+	// devenv shell leak, container build artifact) would silently
+	// override the file-mounted token and authenticate gh with
+	// whatever value GH_TOKEN had — defeating the point of the
+	// file-mount path. The helper filters BOTH GH_TOKEN and
+	// GITHUB_TOKEN from the inherited env before injecting its own
+	// GITHUB_TOKEN, guaranteeing the loaded token is the only
+	// signal the child sees.
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("no /bin/sh on this host — skipping subprocess env check")
+	}
+	t.Setenv("GH_TOKEN", "ghp_stray_parent_value_should_be_filtered")
+	t.Setenv("GITHUB_TOKEN", "ghp_also_filtered")
+
+	fn := chips.DefaultExecFnWithToken("ghp_authoritative_file_value")
+	// Print both env vars from the child; GITHUB_TOKEN should be
+	// our injected value, GH_TOKEN should be absent (empty).
+	out, err := fn(t.Context(), "sh", "-c",
+		`printf "GH_TOKEN=%s|GITHUB_TOKEN=%s" "$GH_TOKEN" "$GITHUB_TOKEN"`)
+	if err != nil {
+		t.Fatalf("exec sh: %v", err)
+	}
+	want := "GH_TOKEN=|GITHUB_TOKEN=ghp_authoritative_file_value"
+	if string(out) != want {
+		t.Errorf("child env mismatch:\n  got:  %q\n  want: %q", out, want)
+	}
+}
+
+func TestDefaultExecFnWithTokenFiltersBothEvenWhenTokenInjectedMatches(t *testing.T) {
+	// Edge case: parent has GH_TOKEN set to the same value the
+	// caller is injecting. The filter still drops GH_TOKEN before
+	// the append, so the child sees only GITHUB_TOKEN. Pins that
+	// GH_TOKEN is unconditionally filtered — there is no scenario
+	// where gh CLI sees GH_TOKEN from the child env.
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("no /bin/sh on this host — skipping subprocess env check")
+	}
+	sameValue := "ghp_same_value_on_both_sides"
+	t.Setenv("GH_TOKEN", sameValue)
+
+	fn := chips.DefaultExecFnWithToken(sameValue)
+	out, err := fn(t.Context(), "sh", "-c", `printf "%s" "$GH_TOKEN"`)
+	if err != nil {
+		t.Fatalf("exec sh: %v", err)
+	}
+	if string(out) != "" {
+		t.Errorf("GH_TOKEN reached child despite filter: %q", out)
 	}
 }
 

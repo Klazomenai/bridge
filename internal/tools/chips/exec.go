@@ -34,9 +34,18 @@ func DefaultExecFn() ExecFn {
 // file rather than the bridge process's env (see
 // cmd/bridge/githubauth.go's LoadGitHubToken).
 //
-// The gh CLI reads GITHUB_TOKEN from its env to authenticate
-// against the GitHub API. Setting it only on the child cmd's Env
-// keeps the token off the bridge process — it doesn't appear in
+// The gh CLI reads GH_TOKEN (preferred) and GITHUB_TOKEN (fallback)
+// from its env to authenticate against the GitHub API. To make the
+// loaded token authoritative — and to guard against a stray
+// GH_TOKEN in the bridge's environment silently overriding it
+// because gh prefers GH_TOKEN — the inherited env is filtered:
+// every GH_TOKEN= / GITHUB_TOKEN= entry from os.Environ() is
+// dropped before we append our own GITHUB_TOKEN entry. Other env
+// vars (PATH, HOME, etc.) survive into the child unchanged so gh
+// can find its dependencies.
+//
+// Setting GITHUB_TOKEN only on the child cmd's Env keeps the token
+// off the bridge process — it doesn't appear in
 // /proc/<bridge-pid>/environ, but it DOES appear in
 // /proc/<gh-pid>/environ during the brief life of each gh
 // subprocess. That window is the minimum any env-passing
@@ -52,7 +61,21 @@ func DefaultExecFnWithToken(token string) ExecFn {
 	return func(ctx context.Context, name string, args ...string) ([]byte, error) {
 		cmd := exec.CommandContext(ctx, name, args...)
 		if token != "" {
-			cmd.Env = append(os.Environ(), "GITHUB_TOKEN="+token)
+			parent := os.Environ()
+			env := make([]string, 0, len(parent)+1)
+			for _, e := range parent {
+				// Drop both gh-CLI auth env vars so the injected
+				// value is the only signal the child sees. Without
+				// this filter, a stray GH_TOKEN= in the parent's
+				// env would win against our GITHUB_TOKEN= because
+				// gh prefers GH_TOKEN.
+				if strings.HasPrefix(e, "GH_TOKEN=") || strings.HasPrefix(e, "GITHUB_TOKEN=") {
+					continue
+				}
+				env = append(env, e)
+			}
+			env = append(env, "GITHUB_TOKEN="+token)
+			cmd.Env = env
 		}
 		return cmd.Output()
 	}
