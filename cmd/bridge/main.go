@@ -6,6 +6,7 @@ package main
 import (
 	"context"
 	"errors"
+	"flag"
 	"log/slog"
 	"net/http"
 	"os"
@@ -31,6 +32,19 @@ import (
 )
 
 func main() {
+	// --- Command-line flags ---
+	// --insecure-token-from-env (default false): when set, the Chips
+	// GitHub PAT is read from the GITHUB_TOKEN env var instead of the
+	// mounted secret file at /run/secrets/github/token. Production
+	// deployments mount the file via the helm chart's chips.enabled
+	// values gate; this flag is for local dev where mounting a
+	// Kubernetes secret is impractical. See LoadGitHubToken's
+	// docstring for the security trade-off (env vars are exposed via
+	// /proc/<pid>/environ; file-mounted secrets are not).
+	insecureTokenFromEnv := flag.Bool("insecure-token-from-env", false,
+		"read GITHUB_TOKEN from env var instead of /run/secrets/github/token (DEV ONLY; bypasses the chart's file-mount path)")
+	flag.Parse()
+
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
 
@@ -140,7 +154,22 @@ func main() {
 	}
 
 	// --- Chips tools ---
-	ghToken := os.Getenv("GITHUB_TOKEN")
+	// GitHub PAT loaded from /run/secrets/github/token (or env via the
+	// --insecure-token-from-env dev flag); allowlist is a CSV env var
+	// rendered by helm/bridge/templates/deployment.yaml from
+	// chips.repoAllowlist in values.yaml. Empty token or empty CSV →
+	// stub tools (chart's chips.enabled=false default).
+	ghToken, err := LoadGitHubToken(*insecureTokenFromEnv)
+	if err != nil {
+		slog.Error("chips: failed to load GitHub token; registering stubs",
+			"err", err)
+		// Fall through with empty token — caller's existing branch
+		// registers stub tools. Surfacing the error in the log lets
+		// operators triage misconfigured GITHUB_TOKEN_FILE without
+		// the bridge failing to start (Anthropic key is the only
+		// hard requirement; Chips is a feature, not the core).
+		ghToken = ""
+	}
 	chipsRepoCSV := os.Getenv("CHIPS_REPO_ALLOWLIST")
 	if ghToken != "" && chipsRepoCSV != "" && hasExec("gh") && hasExec("git") {
 		chipstools.RegisterChipsTools(
