@@ -8,34 +8,96 @@ import (
 	"klazomenai/bridge/internal/tools/redact"
 )
 
-// TestChipsSanitisePerPatternPositive pins that chips.Sanitise — not
-// just the underlying redact.Sanitise — applies every named pattern.
-// Per-pattern negative cases live in internal/tools/redact/redact_test.go
-// alongside the pattern definitions; this table is the chips-side
-// delegation contract demanded by #83's AC: "Unit tests in
-// internal/tools/chips/sanitise_test.go cover each pattern".
-func TestChipsSanitisePerPatternPositive(t *testing.T) {
+// TestChipsSanitisePerPatternPositiveAndNegative pins that
+// chips.Sanitise — not just the underlying redact.Sanitise — both
+// applies every named pattern to a positive case AND leaves a
+// near-miss input unchanged at the chips boundary. Satisfies #83's
+// AC: "Unit tests in internal/tools/chips/sanitise_test.go cover
+// each pattern with at least one positive and one false-positive
+// case". Negative fixtures mirror the per-pattern boundary cases in
+// internal/tools/redact/redact_test.go and are pinned again here so
+// the wrapper layer's contract is verified directly rather than
+// indirectly through the redact tests.
+func TestChipsSanitisePerPatternPositiveAndNegative(t *testing.T) {
 	cases := []struct {
 		name        string
-		input       string
+		positive    string
+		negative    string
 		mustContain string
 	}{
-		{"aws_access_key", "comment body: AKIATESTKEY012345678 planted by attacker", "AKIA…REDACTED"},
-		{"github_token_ghp", "Hey check out this PAT: ghp_" + strings.Repeat("Z", 40) + " — please rotate", "ghp_…REDACTED"},
-		{"github_token_ghu", "leaked user token ghu_" + strings.Repeat("B", 40) + " end", "ghu_…REDACTED"},
-		{"github_pat", "found token github_pat_" + strings.Repeat("C", 30) + " in logs", "github_pat_…REDACTED"},
-		{"openai_anthropic_key", "claude key sk-ant-" + strings.Repeat("d", 40) + " in comment", "sk-…REDACTED"},
-		{"slack_token", "slack bot tok xoxb-1234567890-abcde-fghijk in body", "xoxb-…REDACTED"},
-		{"jwt", "auth=eyJ-TEST-HEADER-PART.eyJ-TEST-PAYLOAD-PART.TEST-SIGNATURE-PART rest", "JWT-REDACTED"},
-		{"pem_block", "found:\n-----BEGIN RSA PRIVATE KEY-----\nMIIEpAIBAA\nKCAQEA\n-----END RSA PRIVATE KEY-----\nin comment", "-----BEGIN … KEY----- REDACTED -----END … KEY-----"},
-		{"bearer_token", "Authorization: Bearer abc123def456ghi.789-jkl_mno", "Bearer REDACTED"},
-		{"password_assignment", "config snippet password: hunter2-but-longer", "password: REDACTED"},
+		{
+			name:        "aws_access_key",
+			positive:    "comment body: AKIATESTKEY012345678 planted by attacker",
+			negative:    "operator note: AKIAtypo here in body",
+			mustContain: "AKIA…REDACTED",
+		},
+		{
+			name:        "github_token_ghp",
+			positive:    "Hey check out this PAT: ghp_" + strings.Repeat("Z", 40) + " — please rotate",
+			negative:    "stub token ghp_short in comment",
+			mustContain: "ghp_…REDACTED",
+		},
+		{
+			name:        "github_token_ghu",
+			positive:    "leaked user token ghu_" + strings.Repeat("B", 40) + " end",
+			negative:    "tok ghu_too_short for the class match",
+			mustContain: "ghu_…REDACTED",
+		},
+		{
+			name:        "github_pat",
+			positive:    "found token github_pat_" + strings.Repeat("C", 30) + " in logs",
+			negative:    "github_pat_short fixture",
+			mustContain: "github_pat_…REDACTED",
+		},
+		{
+			name:        "openai_anthropic_key",
+			positive:    "claude key sk-ant-" + strings.Repeat("d", 40) + " in comment",
+			negative:    "snippet sk-x truncated here",
+			mustContain: "sk-…REDACTED",
+		},
+		{
+			name:        "slack_token",
+			positive:    "slack bot tok xoxb-1234567890-abcde-fghijk in body",
+			negative:    "fixture xoxq-not-a-slack-shape here",
+			mustContain: "xoxb-…REDACTED",
+		},
+		{
+			name:        "jwt",
+			positive:    "auth=eyJ-TEST-HEADER-PART.eyJ-TEST-PAYLOAD-PART.TEST-SIGNATURE-PART rest",
+			negative:    "auth=eyJonly-no-second-segment here",
+			mustContain: "JWT-REDACTED",
+		},
+		{
+			name:        "pem_block",
+			positive:    "found:\n-----BEGIN RSA PRIVATE KEY-----\nMIIEpAIBAA\nKCAQEA\n-----END RSA PRIVATE KEY-----\nin comment",
+			negative:    "no envelope here, just the word BEGIN by itself",
+			mustContain: "-----BEGIN … KEY----- REDACTED -----END … KEY-----",
+		},
+		{
+			name:        "bearer_token",
+			positive:    "Authorization: Bearer abc123def456ghi.789-jkl_mno",
+			negative:    "the bearer of bad news arrived early",
+			mustContain: "Bearer REDACTED",
+		},
+		{
+			name:        "password_assignment",
+			positive:    "config snippet password: hunter2-but-longer",
+			negative:    "passwordless flow needs more docs",
+			mustContain: "password: REDACTED",
+		},
 	}
 	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			out := chips.Sanitise(tc.input)
+		t.Run(tc.name+"/positive", func(t *testing.T) {
+			out := chips.Sanitise(tc.positive)
 			if !strings.Contains(out, tc.mustContain) {
 				t.Errorf("expected %q in output, got: %q", tc.mustContain, out)
+			}
+		})
+		t.Run(tc.name+"/negative", func(t *testing.T) {
+			out := chips.Sanitise(tc.negative)
+			if out != tc.negative {
+				t.Errorf("near-miss input altered at chips boundary: %q → %q",
+					tc.negative, out)
 			}
 		})
 	}

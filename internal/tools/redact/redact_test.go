@@ -328,11 +328,30 @@ func TestSanitiseFailClosedOnPanic(t *testing.T) {
 	}
 }
 
-func TestSanitiseWithEmptyPatternsReturnsInputUnchanged(t *testing.T) {
+func TestSanitiseWithEmptyPatternsUnderCapReturnsInputUnchanged(t *testing.T) {
+	// Below the cap, an empty pattern set should short-circuit
+	// replacement and leave input bytes intact.
 	in := "anything here including AKIATESTKEY012345678"
 	out := redact.SanitiseWith(in, nil)
 	if out != in {
-		t.Errorf("empty pattern set altered input: %q → %q", in, out)
+		t.Errorf("empty pattern set altered under-cap input: %q → %q", in, out)
+	}
+}
+
+func TestSanitiseWithEmptyPatternsOverCapStillTruncates(t *testing.T) {
+	// The cap is enforced unconditionally — even with no patterns
+	// to apply, an oversized input is truncated to MaxSanitiserInputBytes
+	// before any pattern loop runs. This pins the contract that the
+	// length ceiling is a property of SanitiseWith itself, not of the
+	// pattern set.
+	in := strings.Repeat("a", redact.MaxSanitiserInputBytes+1000)
+	out := redact.SanitiseWith(in, nil)
+	if len(out) != redact.MaxSanitiserInputBytes {
+		t.Errorf("over-cap input not truncated to cap: got %d bytes, want %d",
+			len(out), redact.MaxSanitiserInputBytes)
+	}
+	if out != in[:redact.MaxSanitiserInputBytes] {
+		t.Error("over-cap truncated output differs from prefix of original input")
 	}
 }
 
