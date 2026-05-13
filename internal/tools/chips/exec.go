@@ -71,6 +71,20 @@ var SanitiseOutputForTest = sanitiseOutput
 // caller's Tool.Name(), e.g. "gh_issue_view") and `field=output`.
 // Tests pass tool="" to stay silent; production callers pass
 // t.Name().
+//
+// Scope deviation from #83 AC body: the spec body says "Touch only
+// the *content* fields (issue.body, comment.body, review.body),
+// never structural fields (numbers, URLs, dates)." This function
+// runs the chain over the WHOLE `gh --json` stdout rather than
+// unmarshalling and walking specific content-field paths. The
+// patterns are narrow enough that numbers, dates, and non-token-
+// bearing URLs aren't matched in practice; in the one edge case
+// where the deviation matters (a URL query string containing
+// `?password=...`), the result is desirable redaction of a
+// secret-in-URL leak. Per-field walking was deemed unnecessary
+// complexity given the orchestrator-level safety floor in #129
+// will apply the same patterns whole-output downstream anyway.
+// Pinned in the #83 close-out discussion.
 func sanitiseOutput(output, token, tool string) string {
 	cleaned := redact.Redact(output, token)
 	if tool == "" {
