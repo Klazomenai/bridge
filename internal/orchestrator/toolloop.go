@@ -152,7 +152,10 @@ func (o *Orchestrator) executeToolCalls(ctx context.Context, content []anthropic
 			slog.Warn("orchestrator: tool not in crew allowlist",
 				"tool", block.Name, "allowed", allowedTools)
 			results = append(results, anthropic.NewToolResultBlock(
-				block.ID, fmt.Sprintf("tool %q not allowed for this crew member", block.Name), true))
+				block.ID,
+				sanitiseToolResultContent(block.Name,
+					fmt.Sprintf("tool %q not allowed for this crew member", block.Name)),
+				true))
 			continue
 		}
 
@@ -164,7 +167,10 @@ func (o *Orchestrator) executeToolCalls(ctx context.Context, content []anthropic
 				"room", roomID,
 			)
 			results = append(results, anthropic.NewToolResultBlock(
-				block.ID, fmt.Sprintf("tool error: unknown tool: %q", block.Name), true))
+				block.ID,
+				sanitiseToolResultContent(block.Name,
+					fmt.Sprintf("tool error: unknown tool: %q", block.Name)),
+				true))
 			continue
 		}
 
@@ -183,12 +189,24 @@ func (o *Orchestrator) executeToolCalls(ctx context.Context, content []anthropic
 					"from", crewID, "to", targetCrew, "room", roomID)
 				*delegation = &delegationRequest{crewID: targetCrew, context: delegateCtx}
 				results = append(results, anthropic.NewToolResultBlock(
-					block.ID, fmt.Sprintf("Delegating to %s.", targetCrew), false))
+					block.ID,
+					sanitiseToolResultContent(block.Name,
+						fmt.Sprintf("Delegating to %s.", targetCrew)),
+					false))
 				return results // skip remaining tools
 			}
 		}
 
-		results = append(results, anthropic.NewToolResultBlock(block.ID, result, isError))
+		// Orchestrator-level safety floor (#129): every tool_result
+		// content block — including the four error paths above —
+		// passes through the shared redact.Sanitise. Per-tool
+		// sanitisers stay as the first line; this is the contractual
+		// guarantee that no raw tool output reaches the model without
+		// the shared pattern set having a final pass at it.
+		results = append(results, anthropic.NewToolResultBlock(
+			block.ID,
+			sanitiseToolResultContent(block.Name, result),
+			isError))
 	}
 
 	return results
