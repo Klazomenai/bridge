@@ -157,39 +157,41 @@ func extractToolResultText(t *testing.T, mock *mockClaudeClient) string {
 // content block routed through the orchestrator passes through the
 // shared redact.Sanitise, regardless of whether the producing tool
 // already sanitised its own output. The table covers a single-
-// pattern case per default pattern shape PLUS a multi-pattern case,
-// so a tool whose output bypasses the per-tool layer (new author,
-// third-party integration) still has the floor as a backstop.
+// pattern case per default pattern shape PLUS a multi-pattern case
+// whose expectations are slices of strings so every planted token
+// shape is verified individually — a regression that stopped
+// sanitisation after the first pattern would otherwise sneak
+// through a single-expectation assertion on the multi-pattern case.
 func TestOrchestrator_AllToolResultsPassThroughSanitiser(t *testing.T) {
 	cases := []struct {
 		name        string
 		output      string
-		mustNotHave string
-		mustContain string
+		mustNotHave []string
+		mustContain []string
 	}{
 		{
 			name:        "aws_access_key",
 			output:      "comment: AKIATESTKEY012345678 planted by attacker",
-			mustNotHave: "AKIATESTKEY012345678",
-			mustContain: "AKIA…REDACTED",
+			mustNotHave: []string{"AKIATESTKEY012345678"},
+			mustContain: []string{"AKIA…REDACTED"},
 		},
 		{
 			name:        "github_token",
 			output:      "PAT leaked: ghp_" + strings.Repeat("A", 40) + " end",
-			mustNotHave: strings.Repeat("A", 40),
-			mustContain: "ghp_…REDACTED",
+			mustNotHave: []string{strings.Repeat("A", 40)},
+			mustContain: []string{"ghp_…REDACTED"},
 		},
 		{
 			name:        "openai_anthropic_key",
 			output:      "claude key sk-ant-" + strings.Repeat("d", 40) + " in body",
-			mustNotHave: strings.Repeat("d", 40),
-			mustContain: "sk-…REDACTED",
+			mustNotHave: []string{strings.Repeat("d", 40)},
+			mustContain: []string{"sk-…REDACTED"},
 		},
 		{
 			name:        "multi_pattern_payload",
 			output:      "AWS=AKIATESTKEY012345678 GH=ghp_" + strings.Repeat("B", 40),
-			mustNotHave: "AKIATESTKEY012345678",
-			mustContain: "AKIA…REDACTED",
+			mustNotHave: []string{"AKIATESTKEY012345678", strings.Repeat("B", 40)},
+			mustContain: []string{"AKIA…REDACTED", "ghp_…REDACTED"},
 		},
 	}
 	for _, tc := range cases {
@@ -207,12 +209,17 @@ func TestOrchestrator_AllToolResultsPassThroughSanitiser(t *testing.T) {
 				t.Fatalf("Handle: %v", err)
 			}
 			content := extractToolResultText(t, mock)
-			if strings.Contains(content, tc.mustNotHave) {
-				t.Errorf("raw token leaked through orchestrator floor: %q", content)
+			for _, raw := range tc.mustNotHave {
+				if strings.Contains(content, raw) {
+					t.Errorf("raw token %q leaked through orchestrator floor: %q",
+						raw, content)
+				}
 			}
-			if !strings.Contains(content, tc.mustContain) {
-				t.Errorf("expected %q in tool_result content, got: %q",
-					tc.mustContain, content)
+			for _, sentinel := range tc.mustContain {
+				if !strings.Contains(content, sentinel) {
+					t.Errorf("expected %q in tool_result content, got: %q",
+						sentinel, content)
+				}
 			}
 		})
 	}
