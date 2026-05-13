@@ -11,6 +11,7 @@ import (
 	ctxbuf "klazomenai/bridge/internal/context"
 	"klazomenai/bridge/internal/crew"
 	"klazomenai/bridge/internal/tools"
+	"klazomenai/bridge/internal/tools/redact"
 )
 
 const (
@@ -149,22 +150,38 @@ func (o *Orchestrator) executeToolCalls(ctx context.Context, content []anthropic
 		}
 
 		if !allowed[block.Name] {
+			// block.Name is model-supplied and could itself contain
+			// a token shape. Sanitise once and reuse for both the
+			// orchestrator-level Warn log AND the returned error
+			// content, so the floor's safety guarantee extends to
+			// every emission about this rejected name on this path.
+			safeName := redact.Sanitise(block.Name)
 			slog.Warn("orchestrator: tool not in crew allowlist",
-				"tool", block.Name, "allowed", allowedTools)
+				"tool", safeName, "allowed", allowedTools)
 			results = append(results, anthropic.NewToolResultBlock(
-				block.ID, fmt.Sprintf("tool %q not allowed for this crew member", block.Name), true))
+				block.ID,
+				sanitiseToolResultContent(safeName,
+					fmt.Sprintf("tool %q not allowed for this crew member", safeName)),
+				true))
 			continue
 		}
 
 		tool := o.tools.Get(block.Name)
 		if tool == nil {
+			// Same threat as the allowlist path: block.Name is
+			// model-supplied. Derive a sanitised form once for both
+			// the Warn log and the returned error content.
+			safeName := redact.Sanitise(block.Name)
 			slog.Warn("orchestrator: unknown tool requested",
-				"tool", block.Name,
+				"tool", safeName,
 				"crew", crewID,
 				"room", roomID,
 			)
 			results = append(results, anthropic.NewToolResultBlock(
-				block.ID, fmt.Sprintf("tool error: unknown tool: %q", block.Name), true))
+				block.ID,
+				sanitiseToolResultContent(safeName,
+					fmt.Sprintf("tool error: unknown tool: %q", safeName)),
+				true))
 			continue
 		}
 
@@ -179,16 +196,38 @@ func (o *Orchestrator) executeToolCalls(ctx context.Context, content []anthropic
 		// Detect delegation sentinel — only from the delegate_to_crew tool.
 		if !isError && block.Name == tools.DelegateToolName {
 			if targetCrew, delegateCtx, ok := tools.ParseDelegation(result); ok {
+				// targetCrew is parsed from the delegate_to_crew
+				// tool's output, ultimately model-supplied. Sanitise
+				// for slog AND tool_result content. Routing keeps
+				// the raw value (the registry lookup is the
+				// validation surface for that consumer; orchestrator.go's
+				// downstream "following delegation" / "unknown crew"
+				// logs are tracked separately).
+				safeTarget := redact.Sanitise(targetCrew)
 				slog.Info("orchestrator: delegation requested",
-					"from", crewID, "to", targetCrew, "room", roomID)
+					"from", crewID, "to", safeTarget, "room", roomID)
 				*delegation = &delegationRequest{crewID: targetCrew, context: delegateCtx}
 				results = append(results, anthropic.NewToolResultBlock(
-					block.ID, fmt.Sprintf("Delegating to %s.", targetCrew), false))
+					block.ID,
+					sanitiseToolResultContent(block.Name,
+						fmt.Sprintf("Delegating to %s.", safeTarget)),
+					false))
 				return results // skip remaining tools
 			}
 		}
 
-		results = append(results, anthropic.NewToolResultBlock(block.ID, result, isError))
+		// Orchestrator-level safety floor (#129): every tool_result
+		// content block — this normal-result path plus the three
+		// special paths above (allowlist refusal, unknown tool,
+		// delegation sentinel) — passes through the shared
+		// redact.Sanitise. Per-tool sanitisers stay as the first
+		// line; this is the contractual guarantee that no raw tool
+		// output reaches the model without the shared pattern set
+		// having a final pass at it.
+		results = append(results, anthropic.NewToolResultBlock(
+			block.ID,
+			sanitiseToolResultContent(block.Name, result),
+			isError))
 	}
 
 	return results
