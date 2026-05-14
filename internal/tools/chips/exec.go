@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"klazomenai/bridge/internal/tools/redact"
@@ -34,15 +35,24 @@ func DefaultExecFn() ExecFn {
 // file rather than the bridge process's env (see
 // cmd/bridge/githubauth.go's LoadGitHubToken).
 //
+// Injection is gated on the command name being gh — concretely
+// `filepath.Base(name) == "gh"`. The same ExecFn instance is
+// passed (via registration.go) to both the gh_* tools and the
+// git_log/git_diff tools; only the former invoke the GitHub CLI
+// and need the PAT. Narrowing the injection to gh commands keeps
+// the token off /proc/<git-pid>/environ for `git log` / `git
+// diff` subprocesses (which don't authenticate against the GitHub
+// API; git's local operations need no token).
+//
 // The gh CLI reads GH_TOKEN (preferred) and GITHUB_TOKEN (fallback)
-// from its env to authenticate against the GitHub API. To make the
-// loaded token authoritative — and to guard against a stray
-// GH_TOKEN in the bridge's environment silently overriding it
-// because gh prefers GH_TOKEN — the inherited env is filtered:
-// every GH_TOKEN= / GITHUB_TOKEN= entry from os.Environ() is
-// dropped before we append our own GITHUB_TOKEN entry. Other env
-// vars (PATH, HOME, etc.) survive into the child unchanged so gh
-// can find its dependencies.
+// from its env to authenticate. To make the loaded token
+// authoritative — and to guard against a stray GH_TOKEN in the
+// bridge's environment silently overriding it because gh prefers
+// GH_TOKEN — the inherited env is filtered: every GH_TOKEN= /
+// GITHUB_TOKEN= entry from os.Environ() is dropped before we
+// append our own GITHUB_TOKEN entry. Other env vars (PATH, HOME,
+// etc.) survive into the child unchanged so gh can find its
+// dependencies.
 //
 // Setting GITHUB_TOKEN only on the child cmd's Env keeps the token
 // off the bridge process — it doesn't appear in
@@ -60,25 +70,45 @@ func DefaultExecFn() ExecFn {
 func DefaultExecFnWithToken(token string) ExecFn {
 	return func(ctx context.Context, name string, args ...string) ([]byte, error) {
 		cmd := exec.CommandContext(ctx, name, args...)
-		if token != "" {
-			parent := os.Environ()
-			env := make([]string, 0, len(parent)+1)
-			for _, e := range parent {
-				// Drop both gh-CLI auth env vars so the injected
-				// value is the only signal the child sees. Without
-				// this filter, a stray GH_TOKEN= in the parent's
-				// env would win against our GITHUB_TOKEN= because
-				// gh prefers GH_TOKEN.
-				if strings.HasPrefix(e, "GH_TOKEN=") || strings.HasPrefix(e, "GITHUB_TOKEN=") {
-					continue
-				}
-				env = append(env, e)
-			}
-			env = append(env, "GITHUB_TOKEN="+token)
+		if env := buildGhChildEnv(os.Environ(), name, token); env != nil {
 			cmd.Env = env
 		}
 		return cmd.Output()
 	}
+}
+
+// buildGhChildEnv constructs the child process environment for a
+// DefaultExecFnWithToken call, or returns nil to signal "let the
+// child inherit the parent's os.Environ() unchanged".
+//
+// Returns nil when token is empty OR when the command's basename
+// is anything other than "gh" — both states mean we don't want to
+// override Cmd.Env and the caller should leave it as Go's default
+// (nil → inherit parent).
+//
+// When the gate passes, the returned slice is parent's os.Environ()
+// with any GH_TOKEN= / GITHUB_TOKEN= entries filtered out, plus a
+// fresh GITHUB_TOKEN= entry carrying the injected value at the end.
+// Extracted as a pure function so the gating + filtering logic can
+// be unit-tested directly without subprocess setup (see
+// exec_internal_test.go).
+func buildGhChildEnv(parent []string, name, token string) []string {
+	if token == "" || filepath.Base(name) != "gh" {
+		return nil
+	}
+	env := make([]string, 0, len(parent)+1)
+	for _, e := range parent {
+		// Drop both gh-CLI auth env vars so the injected value is
+		// the only signal the child sees. Without this filter, a
+		// stray GH_TOKEN= in the parent's env would win against
+		// our GITHUB_TOKEN= because gh prefers GH_TOKEN.
+		if strings.HasPrefix(e, "GH_TOKEN=") || strings.HasPrefix(e, "GITHUB_TOKEN=") {
+			continue
+		}
+		env = append(env, e)
+	}
+	env = append(env, "GITHUB_TOKEN="+token)
+	return env
 }
 
 // RepoAllowlist is a set of allowed org/repo pairs.

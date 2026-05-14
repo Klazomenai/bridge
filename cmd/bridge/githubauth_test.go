@@ -12,13 +12,18 @@ import (
 // captureSlog routes the default slog logger to a buffer for the
 // duration of one test. Used to assert that the token loader does
 // not leak the raw token value into any log line — the "token never
-// logged" half of #141's AC.
+// logged, even in debug mode" half of #141's AC.
+//
+// Handler level is LevelDebug so a future regression that adds e.g.
+// slog.Debug("loaded token", "value", token) is caught — at LevelInfo
+// the Debug emission would be filtered out before reaching the
+// buffer, and the absent-token assertion below would vacuously pass.
 func captureSlog(t *testing.T) (*bytes.Buffer, func()) {
 	t.Helper()
 	var buf bytes.Buffer
 	original := slog.Default()
 	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{
-		Level: slog.LevelInfo,
+		Level: slog.LevelDebug,
 	})))
 	return &buf, func() { slog.SetDefault(original) }
 }
