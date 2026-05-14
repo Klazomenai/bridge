@@ -10,6 +10,9 @@ import (
 	"klazomenai/bridge/internal/tools/maren"
 )
 
+// All tools in this package wrap an ExecFn; tests inject mockExec rather than
+// invoking kubectl or helm against a live cluster.
+
 // mockExec returns a mock ExecFn that records calls and returns canned output.
 func mockExec(output string, err error) (maren.ExecFn, *[]string) {
 	var calls []string
