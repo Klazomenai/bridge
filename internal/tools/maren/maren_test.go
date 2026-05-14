@@ -10,6 +10,9 @@ import (
 	"klazomenai/bridge/internal/tools/maren"
 )
 
+// All tools in this package wrap an ExecFn; tests inject mockExec rather than
+// invoking kubectl or helm against a live cluster.
+
 // mockExec returns a mock ExecFn that records calls and returns canned output.
 func mockExec(output string, err error) (maren.ExecFn, *[]string) {
 	var calls []string
@@ -92,6 +95,44 @@ func TestKubectlGetDeniedResource(t *testing.T) {
 			}
 			if !strings.Contains(err.Error(), "not permitted") {
 				t.Errorf("expected 'not permitted' error, got: %v", err)
+			}
+		})
+	}
+}
+
+// TestKubectlGetSecretsAllVariantsBlocked asserts that every case/plurality
+// variant of "secrets" is rejected before the K8s API is touched. This is the
+// defence-in-depth regression test that pairs with the ClusterRole tightening
+// in bridge#127: even if the RBAC permission is accidentally reinstated, the
+// code layer independently refuses the call.
+func TestKubectlGetSecretsAllVariantsBlocked(t *testing.T) {
+	cases := []struct {
+		input   string
+		wantMsg string
+	}{
+		// Plural forms → ToLower → "secrets" → hits deniedResources
+		{"secrets", "not permitted"},
+		{"Secrets", "not permitted"},
+		{"SECRETS", "not permitted"},
+		// Singular forms → ToLower → "secret" → misses allowedResources
+		{"secret", "not in the allowed list"},
+		{"Secret", "not in the allowed list"},
+		{"SECRET", "not in the allowed list"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.input, func(t *testing.T) {
+			fn, calls := mockExec("", nil)
+			tool := maren.NewKubectlGetTool(fn)
+			input := mustJSON(t, map[string]string{"resource_type": tc.input})
+			_, err := tool.Execute(t.Context(), input)
+			if err == nil {
+				t.Fatalf("expected error for resource_type %q, got nil", tc.input)
+			}
+			if !strings.Contains(err.Error(), tc.wantMsg) {
+				t.Errorf("resource_type %q: expected error containing %q, got: %v", tc.input, tc.wantMsg, err)
+			}
+			if len(*calls) != 0 {
+				t.Errorf("resource_type %q: exec was called %d time(s); K8s API must not be touched before the denylist check", tc.input, len(*calls))
 			}
 		})
 	}
