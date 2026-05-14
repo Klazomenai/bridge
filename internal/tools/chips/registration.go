@@ -14,6 +14,7 @@ import "klazomenai/bridge/internal/tools"
 func RegisterChipsTools(reg *tools.Registry, execFn ExecFn, allowlist RepoAllowlist, token string) {
 	reg.Register(NewGHIssueListTool(execFn, allowlist, token))
 	reg.Register(NewGHIssueViewTool(execFn, allowlist, token))
+	reg.Register(NewGHIssueCreateTool(execFn, allowlist, token))
 	reg.Register(NewGHPRListTool(execFn, allowlist, token))
 	reg.Register(NewGHPRViewTool(execFn, allowlist, token))
 	reg.Register(NewGHPRChecksTool(execFn, allowlist, token))

@@ -242,8 +242,8 @@ func TestGhPrMergeNotRegistered(t *testing.T) {
 	// Anchor the roster's positive shape so a future deletion of
 	// RegisterChipsTools wouldn't silently turn this into a vacuous test.
 	for _, expected := range []string{
-		"gh_issue_list", "gh_issue_view", "gh_pr_list",
-		"gh_pr_view", "gh_pr_checks", "git_log", "git_diff",
+		"gh_issue_list", "gh_issue_view", "gh_issue_create",
+		"gh_pr_list", "gh_pr_view", "gh_pr_checks", "git_log", "git_diff",
 	} {
 		if !reg.Has(expected) {
 			t.Errorf("production chips registry missing expected tool %q", expected)
