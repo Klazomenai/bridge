@@ -1360,3 +1360,126 @@ func TestPendingConfirmationExceptionAccepts(t *testing.T) {
 		}
 	}
 }
+
+// TestChipsCreatesIssueWhenOperatorIntentDescribesIt drives the full
+// orchestrator path for gh_issue_create — the first real production
+// mutation tool. Unlike TestPendingConfirmationExceptionAccepts (which
+// uses the synthetic test_mutation stub), this test wires an actual
+// GHIssueCreateTool with a mock exec so the allowlist gate, the
+// MutationAware interface, the audit-log emission, and the tool-result
+// threading all fire against production code.
+//
+// Scope: single-turn happy path. The operator-intent confirmation
+// multi-turn flow is already covered by TestPendingConfirmationExceptionAccepts;
+// this test proves the production tool plumbs through that envelope.
+func TestChipsCreatesIssueWhenOperatorIntentDescribesIt(t *testing.T) {
+	defer testutil.VerifyNone(t)
+
+	// Capture audit-log output emitted by sandbox.go during tool execution.
+	var auditBuf bytes.Buffer
+	prevDefault := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&auditBuf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prevDefault) })
+
+	const (
+		issueCreateCrewYAML = `
+default_crew: chips
+crew:
+  chips:
+    name: "Chips"
+    role: "The Carpenter"
+    model: "claude-sonnet-4-6"
+    verbosity: log-entry
+    tools: [delegate_to_crew, gh_issue_create]
+    voice:
+      model: TBD
+      announces_as: "Chips:"
+    system_prompt: "You are Chips. Respond in {verbosity}"
+`
+		fakeIssueURL = "https://github.com/klazomenai/bridge/issues/999"
+	)
+
+	// Mock exec: returns a fake issue URL as gh issue create would.
+	execCalled := false
+	mockExec := func(_ context.Context, name string, args ...string) ([]byte, error) {
+		execCalled = true
+		if name != "gh" {
+			t.Errorf("expected gh, got %q", name)
+		}
+		// Verify -R flag wires the allowlisted repo.
+		joined := strings.Join(args, " ")
+		if !strings.Contains(joined, "klazomenai/bridge") {
+			t.Errorf("expected klazomenai/bridge in args, got %q", joined)
+		}
+		return []byte(fakeIssueURL + "\n"), nil
+	}
+
+	allow := chipstools.ParseRepoAllowlist("klazomenai/bridge")
+	toolReg := tools.NewRegistry()
+	toolReg.Register(&tools.DelegateTool{})
+	toolReg.Register(chipstools.NewGHIssueCreateTool(mockExec, allow, "test-token"))
+
+	// Inline crew setup — uses gh_issue_create in the tools list.
+	f := filepath.Join(t.TempDir(), "crew.yaml")
+	if err := os.WriteFile(f, []byte(issueCreateCrewYAML), 0o600); err != nil {
+		t.Fatalf("write crew yaml: %v", err)
+	}
+	crewReg, err := crew.Load(f)
+	if err != nil {
+		t.Fatalf("load crew: %v", err)
+	}
+	mgr := ctxbuf.NewManager(ctxbuf.DefaultMaxTurns)
+	mock := &mockClaudeClient{responses: []*anthropic.Message{
+		// Claude decides to call gh_issue_create.
+		toolUseResponse("tu_1", "gh_issue_create", json.RawMessage(`{
+			"org":   "klazomenai",
+			"repo":  "bridge",
+			"title": "test: gh_issue_create first run",
+			"body":  "Testing the mutation envelope end-to-end."
+		}`)),
+		// Claude's follow-up after receiving the tool_result.
+		textResponse("Joint filed at " + fakeIssueURL + " — fits clean, Captain."),
+	}}
+	o := orchestrator.NewWithClient(crewReg, mgr, toolReg, mock)
+
+	resp, err := o.Handle(t.Context(), "!room:server",
+		"Chips, file an issue in klazomenai/bridge titled 'test: gh_issue_create first run'",
+		"chips")
+	if err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	// The real exec must have fired — confirms the tool reached production code.
+	if !execCalled {
+		t.Error("mock exec not called — gh_issue_create tool did not execute")
+	}
+
+	// Chips' response must reference the issue URL from the tool_result.
+	if len(resp) == 0 || !strings.Contains(resp[0].Text, "issues/999") {
+		t.Errorf("expected issue URL in Chips response, got %+v", resp)
+	}
+
+	// The tool_result must NOT be marked is_error — the orchestrator
+	// threaded the exec output through cleanly.
+	lastCall := mock.calls[len(mock.calls)-1]
+	lastMsg := lastCall.Messages[len(lastCall.Messages)-1]
+	tr := lastMsg.Content[0].OfToolResult
+	if tr == nil {
+		t.Fatal("expected tool_result in final mock call")
+	}
+	if tr.IsError.Value {
+		t.Errorf("tool_result unexpectedly marked is_error=true: %+v", tr.Content)
+	}
+
+	// Audit-log assertion: mutation:true + the production tool name.
+	auditLog := auditBuf.String()
+	for _, want := range []string{
+		"audit: tool invoked",
+		`"mutation":true`,
+		`"tool":"gh_issue_create"`,
+	} {
+		if !strings.Contains(auditLog, want) {
+			t.Errorf("expected audit log to contain %q; got:\n%s", want, auditLog)
+		}
+	}
+}

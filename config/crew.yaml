@@ -72,7 +72,7 @@ crew:
     role: "The Carpenter"
     model: "claude-sonnet-4-6"
     verbosity: log-entry
-    tools: [delegate_to_crew, gh_issue_list, gh_issue_view, gh_pr_list, gh_pr_view, gh_pr_checks, git_log, git_diff]
+    tools: [delegate_to_crew, gh_issue_list, gh_issue_view, gh_issue_create, gh_pr_list, gh_pr_view, gh_pr_checks, git_log, git_diff]
     skills: [github]
     voice:
       model: TBD
