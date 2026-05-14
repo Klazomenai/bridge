@@ -1,5 +1,35 @@
 # Changelog
 
+## [0.1.0-alpha.6](https://github.com/Klazomenai/bridge/compare/v0.1.0-alpha.5...v0.1.0-alpha.6) (2026-05-14)
+
+
+### ⛵ New Rigging
+
+* **build:** bake dotfiles bundle into image + drift CI 🏗️ ([#166](https://github.com/Klazomenai/bridge/issues/166)) ([e8771b4](https://github.com/Klazomenai/bridge/commit/e8771b48dd3ab3479d453e3c1b86476effba41f0))
+* **chips:** add gh_issue_create — first mutation tool ✨ ([#175](https://github.com/Klazomenai/bridge/issues/175)) ([2841814](https://github.com/Klazomenai/bridge/commit/2841814345166206620ec8cea626ea299ad5638b))
+* **chips:** GitHub PAT from secret file + insecure-token-from-env dev flag 🔐 ([#174](https://github.com/Klazomenai/bridge/issues/174)) ([779eaea](https://github.com/Klazomenai/bridge/commit/779eaea9cae762b20165d717fb1dfb0f67d176b1))
+* **crew:** embed github skill into Chips system prompt 🎓 ([#144](https://github.com/Klazomenai/bridge/issues/144)) ([7def207](https://github.com/Klazomenai/bridge/commit/7def207d8ecc77cff52c95541992718a35a060b8)), closes [#143](https://github.com/Klazomenai/bridge/issues/143)
+* **crew:** introduce Source/Compose API for skill composition 🎓 ([#156](https://github.com/Klazomenai/bridge/issues/156)) ([5e531b8](https://github.com/Klazomenai/bridge/commit/5e531b8f3965ad605e3b895f8746833bd07c6997))
+* **crew:** wire skills:[] schema into Compose (dual-path) 🎓 ([#159](https://github.com/Klazomenai/bridge/issues/159)) ([8ed2e31](https://github.com/Klazomenai/bridge/commit/8ed2e31300c4ba6dd30bce337acb91247ddef17f))
+
+
+### 🔧 Hull Repairs
+
+* **ci:** label override, lint guards, release-please defence-in-depth 🐛 ([#164](https://github.com/Klazomenai/bridge/issues/164)) ([8167394](https://github.com/Klazomenai/bridge/commit/816739418448420336d54bb435d3e494e1e9cbef))
+
+
+### ♻️ Refitted
+
+* **crew:** flip Chips off id-gate, add L2 enforcement tests ♻️ ([#161](https://github.com/Klazomenai/bridge/issues/161)) ([7f4988c](https://github.com/Klazomenai/bridge/commit/7f4988c068862d169eb6a3f126b097406e2e2797))
+* **tools:** extract redaction package + audit-log seam 🔐 ([#157](https://github.com/Klazomenai/bridge/issues/157)) ([dc859a4](https://github.com/Klazomenai/bridge/commit/dc859a42ff269f61ed9f464850b21a882a934c1e))
+
+
+### 🔐 Battened Hatches
+
+* **chips:** pattern-based sanitiser for tool output 🔐 ([#170](https://github.com/Klazomenai/bridge/issues/170)) ([ea801a3](https://github.com/Klazomenai/bridge/commit/ea801a3e65d8887a03c22c77c258f7610540eb9b))
+* **orchestrator:** enforce sanitiser at tool_result intake 🔐 ([#172](https://github.com/Klazomenai/bridge/issues/172)) ([a5187f3](https://github.com/Klazomenai/bridge/commit/a5187f3826ea18d42479858ffb8ec584a4e1d411))
+* **orchestrator:** pre-sanitise model-supplied identifiers in slog 🔐 ([#176](https://github.com/Klazomenai/bridge/issues/176)) ([42d6ecc](https://github.com/Klazomenai/bridge/commit/42d6ecc76dcdd8ca8d8112634951998e69a4eef0))
+
 ## [0.1.0-alpha.5](https://github.com/Klazomenai/bridge/compare/v0.1.0-alpha.4...v0.1.0-alpha.5) (2026-04-25)
 
 
