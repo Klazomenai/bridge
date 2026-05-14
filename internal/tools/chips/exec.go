@@ -81,33 +81,56 @@ func DefaultExecFnWithToken(token string) ExecFn {
 // DefaultExecFnWithToken call, or returns nil to signal "let the
 // child inherit the parent's os.Environ() unchanged".
 //
-// Returns nil when token is empty OR when the command's basename
-// is anything other than "gh" — both states mean we don't want to
-// override Cmd.Env and the caller should leave it as Go's default
-// (nil → inherit parent).
+// GH_TOKEN= / GITHUB_TOKEN= are stripped from ALL subprocess envs
+// (gh and non-gh alike). In production the bridge process never
+// carries those vars — the file-backed token is loaded into memory
+// and injected only into gh subprocesses below. In development,
+// however, the operator's shell may carry GH_TOKEN or
+// --insecure-token-from-env may expose GITHUB_TOKEN; without this
+// broader strip, those values would leak into git_log / git_diff
+// subprocesses that authenticate against nothing (git's local
+// operations need no GitHub PAT).
 //
-// When the gate passes, the returned slice is parent's os.Environ()
-// with any GH_TOKEN= / GITHUB_TOKEN= entries filtered out, plus a
-// fresh GITHUB_TOKEN= entry carrying the injected value at the end.
+// Returns nil (leave Cmd.Env unset → inherit parent) when:
+//   - parent carries no GH auth vars, AND
+//   - no injection is needed (non-gh command, or empty token)
+//
+// Returns a non-nil filtered env otherwise. For gh commands with a
+// non-empty token, GITHUB_TOKEN=<token> is appended at the end so
+// the injected value is the only auth signal the gh subprocess sees.
 // Extracted as a pure function so the gating + filtering logic can
 // be unit-tested directly without subprocess setup (see
 // exec_internal_test.go).
 func buildGhChildEnv(parent []string, name, token string) []string {
-	if token == "" || filepath.Base(name) != "gh" {
-		return nil
+	isGh := filepath.Base(name) == "gh"
+	injectNeeded := isGh && token != ""
+
+	// Optimisation: skip the scan and alloc when we'd inject nothing
+	// and parent carries no GH auth vars to strip (the common case in
+	// production where os.Environ() has no GitHub tokens at all).
+	if !injectNeeded {
+		hasGhAuth := false
+		for _, e := range parent {
+			if strings.HasPrefix(e, "GH_TOKEN=") || strings.HasPrefix(e, "GITHUB_TOKEN=") {
+				hasGhAuth = true
+				break
+			}
+		}
+		if !hasGhAuth {
+			return nil
+		}
 	}
+
 	env := make([]string, 0, len(parent)+1)
 	for _, e := range parent {
-		// Drop both gh-CLI auth env vars so the injected value is
-		// the only signal the child sees. Without this filter, a
-		// stray GH_TOKEN= in the parent's env would win against
-		// our GITHUB_TOKEN= because gh prefers GH_TOKEN.
 		if strings.HasPrefix(e, "GH_TOKEN=") || strings.HasPrefix(e, "GITHUB_TOKEN=") {
 			continue
 		}
 		env = append(env, e)
 	}
-	env = append(env, "GITHUB_TOKEN="+token)
+	if injectNeeded {
+		env = append(env, "GITHUB_TOKEN="+token)
+	}
 	return env
 }
 

@@ -2,6 +2,7 @@ package chips
 
 import (
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -48,6 +49,52 @@ func TestBuildGhChildEnv_GatedOnGhBasenameAndNonEmptyToken(t *testing.T) {
 				t.Errorf("expected GITHUB_TOKEN=%s in env, got %v", tc.wantToken, got)
 			}
 		})
+	}
+}
+
+func TestBuildGhChildEnv_StripGhAuthFromNonGhCommands(t *testing.T) {
+	// When the parent env carries GH auth vars, non-gh subprocesses
+	// (git_log, git_diff) must also receive a filtered env — the
+	// broader strip prevents dev-shell GH_TOKEN or --insecure-token-
+	// from-env GITHUB_TOKEN leaking into git subprocesses that don't
+	// need any GitHub auth at all.
+	parent := []string{
+		"PATH=/usr/bin",
+		"GH_TOKEN=dev_token_must_not_leak",
+		"HOME=/root",
+		"GITHUB_TOKEN=another_must_not_leak",
+	}
+
+	for _, cmdName := range []string{"git", "sh", "git_log"} {
+		t.Run(cmdName, func(t *testing.T) {
+			got := buildGhChildEnv(parent, cmdName, "tok")
+			if got == nil {
+				t.Fatal("want non-nil filtered env when parent has GH auth vars, got nil")
+			}
+			for _, e := range got {
+				if strings.HasPrefix(e, "GH_TOKEN=") {
+					t.Errorf("GH_TOKEN leaked into %s subprocess: %v", cmdName, got)
+				}
+				if strings.HasPrefix(e, "GITHUB_TOKEN=") {
+					t.Errorf("GITHUB_TOKEN leaked into %s subprocess: %v", cmdName, got)
+				}
+			}
+			// Non-auth vars must survive.
+			if !slices.Contains(got, "PATH=/usr/bin") || !slices.Contains(got, "HOME=/root") {
+				t.Errorf("non-auth vars filtered out unexpectedly: %v", got)
+			}
+		})
+	}
+}
+
+func TestBuildGhChildEnv_NoGhAuthInParent_NonGhCmd_ReturnsNil(t *testing.T) {
+	// Optimisation path: when the parent carries no GH auth vars and
+	// the command isn't gh (no injection needed), return nil so Cmd.Env
+	// stays unset and the child inherits the parent unchanged —
+	// avoiding a needless alloc on every git_log / git_diff call.
+	parent := []string{"PATH=/usr/bin", "HOME=/root"} // no GH auth
+	if got := buildGhChildEnv(parent, "git", "tok"); got != nil {
+		t.Errorf("expected nil for clean parent + non-gh cmd, got %v", got)
 	}
 }
 
