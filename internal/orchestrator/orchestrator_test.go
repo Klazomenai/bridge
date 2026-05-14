@@ -1372,6 +1372,95 @@ func TestPendingConfirmationExceptionAccepts(t *testing.T) {
 // Scope: single-turn happy path. The operator-intent confirmation
 // multi-turn flow is already covered by TestPendingConfirmationExceptionAccepts;
 // this test proves the production tool plumbs through that envelope.
+// =====================================================================
+// #173 — pre-sanitise model-supplied identifiers before slog output
+// =====================================================================
+
+// TestRouteDoesNotLeakTokenShapeToLog verifies that a token-shaped
+// requestedCrew value (e.g. planted by prompt injection) is sanitised
+// before landing in the slog "requested" field on the unknown-crew
+// warning line. The raw shape must not appear in any captured log line.
+func TestRouteDoesNotLeakTokenShapeToLog(t *testing.T) {
+	// Redirect slog.Default so we capture the package-level slog.Warn
+	// emitted by orchestrator.go Route().
+	var buf bytes.Buffer
+	prevDefault := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prevDefault) })
+
+	o, _ := newTestOrchestrator(t, newToolRegistry())
+	// 37 alphanum chars after "ghp_" — matches the github_token pattern.
+	const injectedID = "ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+	got := o.Route(injectedID)
+
+	if got.ID() != "maren" {
+		t.Errorf("expected fallback to maren, got %s", got.ID())
+	}
+	if strings.Contains(buf.String(), injectedID) {
+		t.Errorf("token-shaped crew ID leaked into slog \"requested\" field:\n%s", buf.String())
+	}
+}
+
+// TestDelegationDepthExceededTokenShapeNotInLog verifies that a
+// token-shaped crew ID supplied by the model in a delegate_to_crew
+// call is sanitised before it reaches:
+//   - the slog.Info "following delegation" "to" field (depths 0 and 1)
+//   - the slog.Warn "delegation depth exceeded" "to" field (depth 2)
+//   - the user-visible depth-limit response text ("[delegation to X ...]")
+//
+// All three delegation slog/response sites share the same safeDelegateID
+// derivation; this single test drives through all of them by chaining
+// three pure-delegation levels (no text in any response) so the depth
+// limit fires and produces the fallback response.
+func TestDelegationDepthExceededTokenShapeNotInLog(t *testing.T) {
+	var buf bytes.Buffer
+	prevDefault := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prevDefault) })
+
+	toolReg := newToolRegistry()
+	// 42 alphanum chars after "ghp_" — matches the github_token pattern.
+	const injectedCrewID = "ghp_BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"
+	delegateInput := json.RawMessage(fmt.Sprintf(`{"crew":%q,"context":"injected"}`, injectedCrewID))
+
+	// Three pure-delegation levels (no text): at depth 2 the limit fires.
+	o, _ := newTestOrchestrator(t, toolReg,
+		toolUseResponse("tu_1", "delegate_to_crew", delegateInput),
+		toolUseResponse("tu_2", "delegate_to_crew", delegateInput),
+		toolUseResponse("tu_3", "delegate_to_crew", delegateInput),
+	)
+
+	responses, err := o.Handle(t.Context(), "!room:server", "test", "maren")
+	if err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	// Raw injected ID must not appear in any response text.
+	for i, r := range responses {
+		if strings.Contains(r.Text, injectedCrewID) {
+			t.Errorf("response[%d] text contains raw injected crew ID: %q", i, r.Text)
+		}
+	}
+	// Raw injected ID must not appear in any slog output (covers all
+	// three slog sites: following-delegation Info × 2, depth-exceeded Warn).
+	if strings.Contains(buf.String(), injectedCrewID) {
+		t.Errorf("token-shaped crew ID leaked into slog output:\n%s", buf.String())
+	}
+	// Sanity: the depth-limit fallback must still be present so a future
+	// deletion of the safeDelegateID derivation doesn't turn this into a
+	// vacuous test that passes because the branch never fired.
+	found := false
+	for _, r := range responses {
+		if strings.Contains(r.Text, "depth limit reached") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected depth-limit fallback text in responses, got: %+v", responses)
+	}
+}
+
 func TestChipsCreatesIssueWhenOperatorIntentDescribesIt(t *testing.T) {
 	defer testutil.VerifyNone(t)
 

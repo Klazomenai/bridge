@@ -112,7 +112,7 @@ func ExecuteWithSandbox(ctx context.Context, tool ToolDefinition, input json.Raw
 		"crew", meta.CrewID,
 		"room", meta.RoomID,
 		"mutation", meta.Mutation,
-		"argv_redacted", truncateForLog(redact.Redact(string(input), meta.Secrets...), cfg.MaxOutputLen),
+		"argv_redacted", truncateForLog(redact.Sanitise(redact.Redact(string(input), meta.Secrets...)), cfg.MaxOutputLen),
 	)
 
 	start := time.Now()

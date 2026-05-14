@@ -317,6 +317,37 @@ func TestAuditRecordTruncatesLargeArgv(t *testing.T) {
 	}
 }
 
+// TestAuditRecordSanitisesPatternTokensInArgv verifies that the
+// argv_redacted field applies redact.Sanitise on top of the known-secret
+// redact.Redact pass. A token-shaped value present in the tool input
+// but NOT listed in meta.Secrets (so Redact cannot catch it) must still
+// be redacted by the pattern layer — the scenario where a model-supplied
+// argument contains a planted credential shape.
+func TestAuditRecordSanitisesPatternTokensInArgv(t *testing.T) {
+	logger, buf := auditLogger()
+	tool := &testTool{name: "ok", execFn: func(_ context.Context, _ json.RawMessage) (string, error) {
+		return "ok", nil
+	}}
+	// A realistic GH PAT shape — 37 alphanum chars after "ghp_" matches
+	// the github_token pattern in the default Sanitise pattern set.
+	const injectedToken = "ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+	meta := tools.SandboxMeta{
+		CrewID:   "chips",
+		RoomID:   "!room:localhost",
+		ToolName: "test_tool",
+		Logger:   logger,
+		// Intentionally no Secrets — exercises Sanitise (pattern layer) only.
+	}
+	input := json.RawMessage(fmt.Sprintf(`{"repo":"bridge","token":%q}`, injectedToken))
+
+	tools.ExecuteWithSandbox(context.Background(), tool, input, tools.DefaultSandboxConfig(), meta)
+
+	out := buf.String()
+	if strings.Contains(out, injectedToken) {
+		t.Errorf("pattern-shaped token leaked into argv_redacted despite Sanitise layer:\n%s", out)
+	}
+}
+
 func TestAuditRecordUsesDefaultLoggerWhenMetaLoggerNil(t *testing.T) {
 	// Without injection, ExecuteWithSandbox falls back to slog.Default().
 	// We cannot intercept slog.Default() output portably, but we CAN

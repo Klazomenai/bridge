@@ -13,6 +13,7 @@ import (
 	ctxbuf "klazomenai/bridge/internal/context"
 	"klazomenai/bridge/internal/crew"
 	"klazomenai/bridge/internal/tools"
+	"klazomenai/bridge/internal/tools/redact"
 )
 
 const (
@@ -94,7 +95,7 @@ func (o *Orchestrator) Route(requestedCrew string) crew.Crew {
 			return c
 		}
 		slog.Warn("orchestrator: unknown crew member, falling back to default",
-			"requested", requestedCrew, "default", o.registry.DefaultID())
+			"requested", redact.Sanitise(requestedCrew), "default", o.registry.DefaultID())
 	}
 	return o.registry.Default()
 }
@@ -144,26 +145,28 @@ func (o *Orchestrator) handleWithDepth(ctx context.Context, roomID, userText, re
 
 	// If the crew member delegated, recursively handle the delegated crew.
 	if result.delegation != nil && depth < maxDelegationDepth {
+		safeDelegateID := redact.Sanitise(result.delegation.crewID)
 		delegateText := fmt.Sprintf("[%s delegates]: %s", c.Name(), result.delegation.context)
 		slog.Info("orchestrator: following delegation",
-			"from", c.ID(), "to", result.delegation.crewID,
+			"from", c.ID(), "to", safeDelegateID,
 			"room", roomID, "depth", depth+1)
 		more, err := o.handleWithDepth(ctx, roomID, delegateText, result.delegation.crewID, depth+1)
 		if err != nil {
 			slog.Warn("orchestrator: delegation failed, returning partial responses",
-				"to", result.delegation.crewID, "err", err)
+				"to", safeDelegateID, "err", err)
 			return responses, nil
 		}
 		responses = append(responses, more...)
 	} else if result.delegation != nil {
+		safeDelegateID := redact.Sanitise(result.delegation.crewID)
 		slog.Warn("orchestrator: delegation depth exceeded",
-			"from", c.ID(), "to", result.delegation.crewID,
+			"from", c.ID(), "to", safeDelegateID,
 			"depth", depth, "max", maxDelegationDepth)
 		// If the crew delegated with no text, the user would receive nothing.
 		// Add an explanation so the delegation limit is visible.
 		if len(responses) == 0 {
 			responses = append(responses, Response{
-				Text:       fmt.Sprintf("[delegation to %s not followed — depth limit reached]", result.delegation.crewID),
+				Text:       fmt.Sprintf("[delegation to %s not followed — depth limit reached]", safeDelegateID),
 				CrewID:     c.ID(),
 				CrewMember: c.Name(),
 				Verbosity:  c.Verbosity(),
