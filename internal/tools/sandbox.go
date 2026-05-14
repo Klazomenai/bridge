@@ -106,9 +106,13 @@ func ExecuteWithSandbox(ctx context.Context, tool ToolDefinition, input json.Raw
 	// tokens) then pattern-sanitised via redact.Sanitise (token shapes
 	// not known in advance, e.g. prompt-injected credentials) to keep
 	// both classes of sensitive value out of the log destination.
-	// The result is then truncated to MaxOutputLen so a tool with a
-	// giant input payload cannot blow up downstream collectors or
-	// smuggle large non-secret-but-sensitive content past the layers.
+	// Two caps apply in sequence: redact.Sanitise silently truncates at
+	// redact.MaxSanitiserInputBytes (65536) without a marker, then
+	// truncateForLog caps at cfg.MaxOutputLen and appends "[truncated]"
+	// if it fires. When cfg.MaxOutputLen > 65536, only the Sanitise cap
+	// applies and no marker is emitted — operators reading the field
+	// should be aware that absence of "[truncated]" does not guarantee
+	// the full argv was logged.
 	logger.Info("audit: tool invoked",
 		"tool", meta.ToolName,
 		"crew", meta.CrewID,
