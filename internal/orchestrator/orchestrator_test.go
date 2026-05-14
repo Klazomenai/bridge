@@ -1538,8 +1538,10 @@ func TestDelegationDepthExceededTokenShapeNotInLog(t *testing.T) {
 	t.Cleanup(func() { slog.SetDefault(prevDefault) })
 
 	toolReg := newToolRegistry()
-	// 42 alphanum chars after "ghp_" — matches the github_token pattern.
-	const injectedCrewID = "ghp_BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"
+	// All-lowercase: DelegateTool.Execute calls strings.ToLower on the crew
+	// field, so result.delegation.crewID is always the normalised lowercase
+	// form. The negative check must use the same casing or it is vacuous.
+	const injectedCrewID = "ghp_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	delegateInput := json.RawMessage(fmt.Sprintf(`{"crew":%q,"context":"injected"}`, injectedCrewID))
 
 	// Three pure-delegation levels (no text): at depth 2 the limit fires.
@@ -1554,22 +1556,35 @@ func TestDelegationDepthExceededTokenShapeNotInLog(t *testing.T) {
 		t.Fatalf("Handle: %v", err)
 	}
 
-	// Negative (response text): raw ID must not appear.
+	// Negative (response text): raw normalised ID must not appear.
 	for i, r := range responses {
 		if strings.Contains(r.Text, injectedCrewID) {
 			t.Errorf("response[%d] text contains raw injected crew ID: %q", i, r.Text)
 		}
 	}
-	// Negative (slog): raw ID must not appear across all three slog sites.
+
+	// Negative (slog): raw normalised ID must not appear in any log line.
 	logged := buf.String()
 	if strings.Contains(logged, injectedCrewID) {
-		t.Errorf("token-shaped crew ID leaked into slog output:\n%s", logged)
+		t.Errorf("normalised crew ID leaked into slog output:\n%s", logged)
 	}
-	// Positive (slog): REDACTED sentinel must appear, proving the three
-	// delegation slog sites actually fired and used the sanitised value.
-	if !strings.Contains(logged, "REDACTED") {
-		t.Errorf("expected REDACTED sentinel in slog output:\n%s", logged)
+
+	// Positive (slog, per-line): each slog line for the delegation-specific
+	// messages ("following delegation", "delegation depth exceeded") must
+	// contain REDACTED in the "to" field. Checking per-line isolates these
+	// sites from the Route fallback warnings (which also log REDACTED under
+	// "requested", not "to", and are a separate slog site).
+	for _, line := range strings.Split(logged, "\n") {
+		if line == "" {
+			continue
+		}
+		if strings.Contains(line, "following delegation") || strings.Contains(line, "delegation depth exceeded") {
+			if !strings.Contains(line, "REDACTED") {
+				t.Errorf("delegation slog line missing REDACTED sentinel:\n%s", line)
+			}
+		}
 	}
+
 	// Positive (response text): depth-limit fallback must contain REDACTED,
 	// proving the sanitised form reached the user-visible string too.
 	found := false
