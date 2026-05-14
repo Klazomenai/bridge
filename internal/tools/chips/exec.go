@@ -61,12 +61,15 @@ func DefaultExecFn() ExecFn {
 // subprocess. That window is the minimum any env-passing
 // authentication scheme requires.
 //
-// Passing token="" returns an ExecFn that does NOT add GITHUB_TOKEN
-// to the child env (equivalent to DefaultExecFn). This matches the
-// existing "empty token → stub tools" gate in main.go: if a
-// reduce-confidence caller wires the token through this helper with
-// an empty value, the helper degrades to DefaultExecFn rather than
-// emitting an invalid `GITHUB_TOKEN=` env entry.
+// Passing token="" skips injection but GH_TOKEN= / GITHUB_TOKEN=
+// are still stripped from child envs when those vars appear in the
+// parent (see buildGhChildEnv). In a clean parent environment —
+// the normal production case where os.Environ() carries no GitHub
+// auth — this is functionally equivalent to DefaultExecFn. In dev
+// environments where the shell carries GH_TOKEN, auth vars are
+// stripped from every subprocess regardless. The "empty token →
+// stub tools" gate in main.go means real gh subprocesses don't run
+// in this state anyway.
 func DefaultExecFnWithToken(token string) ExecFn {
 	return func(ctx context.Context, name string, args ...string) ([]byte, error) {
 		cmd := exec.CommandContext(ctx, name, args...)
