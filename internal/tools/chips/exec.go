@@ -5,7 +5,9 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"klazomenai/bridge/internal/tools/redact"
@@ -17,10 +19,122 @@ import (
 type ExecFn func(ctx context.Context, name string, args ...string) ([]byte, error)
 
 // DefaultExecFn returns the production exec function using os/exec.
+// The child process inherits the parent's os.Environ() and gets no
+// extra env vars. Callers that need GITHUB_TOKEN authentication for
+// gh-CLI subprocesses should use DefaultExecFnWithToken instead.
 func DefaultExecFn() ExecFn {
 	return func(ctx context.Context, name string, args ...string) ([]byte, error) {
 		return exec.CommandContext(ctx, name, args...).Output()
 	}
+}
+
+// DefaultExecFnWithToken returns an ExecFn that injects
+// GITHUB_TOKEN into the child process's environment without
+// exposing the token in the bridge's own os.Environ(). This is the
+// production path when the token is loaded from a mounted secret
+// file rather than the bridge process's env (see
+// cmd/bridge/githubauth.go's LoadGitHubToken).
+//
+// Injection is gated on the command name being gh — concretely
+// `filepath.Base(name) == "gh"`. The same ExecFn instance is
+// passed (via registration.go) to both the gh_* tools and the
+// git_log/git_diff tools; only the former invoke the GitHub CLI
+// and need the PAT. Narrowing the injection to gh commands keeps
+// the token off /proc/<git-pid>/environ for `git log` / `git
+// diff` subprocesses (which don't authenticate against the GitHub
+// API; git's local operations need no token).
+//
+// The gh CLI reads GH_TOKEN (preferred) and GITHUB_TOKEN (fallback)
+// from its env to authenticate. To make the loaded token
+// authoritative — and to guard against a stray GH_TOKEN in the
+// bridge's environment silently overriding it because gh prefers
+// GH_TOKEN — the inherited env is filtered: every GH_TOKEN= /
+// GITHUB_TOKEN= entry from os.Environ() is dropped before we
+// append our own GITHUB_TOKEN entry. Other env vars (PATH, HOME,
+// etc.) survive into the child unchanged so gh can find its
+// dependencies.
+//
+// Setting GITHUB_TOKEN only on the child cmd's Env keeps the token
+// off the bridge process — it doesn't appear in
+// /proc/<bridge-pid>/environ, but it DOES appear in
+// /proc/<gh-pid>/environ during the brief life of each gh
+// subprocess. That window is the minimum any env-passing
+// authentication scheme requires.
+//
+// Passing token="" skips injection but GH_TOKEN= / GITHUB_TOKEN=
+// are still stripped from child envs when those vars appear in the
+// parent (see buildGhChildEnv). In a clean parent environment —
+// the normal production case where os.Environ() carries no GitHub
+// auth — this is functionally equivalent to DefaultExecFn. In dev
+// environments where the shell carries GH_TOKEN, auth vars are
+// stripped from every subprocess regardless. The "empty token →
+// stub tools" gate in main.go means real gh subprocesses don't run
+// in this state anyway.
+func DefaultExecFnWithToken(token string) ExecFn {
+	return func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		cmd := exec.CommandContext(ctx, name, args...)
+		if env := buildGhChildEnv(os.Environ(), name, token); env != nil {
+			cmd.Env = env
+		}
+		return cmd.Output()
+	}
+}
+
+// buildGhChildEnv constructs the child process environment for a
+// DefaultExecFnWithToken call, or returns nil to signal "let the
+// child inherit the parent's os.Environ() unchanged".
+//
+// GH_TOKEN= / GITHUB_TOKEN= are stripped from ALL subprocess envs
+// (gh and non-gh alike). In production the bridge process never
+// carries those vars — the file-backed token is loaded into memory
+// and injected only into gh subprocesses below. In development,
+// however, the operator's shell may carry GH_TOKEN or
+// --insecure-token-from-env may expose GITHUB_TOKEN; without this
+// broader strip, those values would leak into git_log / git_diff
+// subprocesses that authenticate against nothing (git's local
+// operations need no GitHub PAT).
+//
+// Returns nil (leave Cmd.Env unset → inherit parent) when:
+//   - parent carries no GH auth vars, AND
+//   - no injection is needed (non-gh command, or empty token)
+//
+// Returns a non-nil filtered env otherwise. For gh commands with a
+// non-empty token, GITHUB_TOKEN=<token> is appended at the end so
+// the injected value is the only auth signal the gh subprocess sees.
+// Extracted as a pure function so the gating + filtering logic can
+// be unit-tested directly without subprocess setup (see
+// exec_internal_test.go).
+func buildGhChildEnv(parent []string, name, token string) []string {
+	isGh := filepath.Base(name) == "gh"
+	injectNeeded := isGh && token != ""
+
+	// Optimisation: skip the scan and alloc when we'd inject nothing
+	// and parent carries no GH auth vars to strip (the common case in
+	// production where os.Environ() has no GitHub tokens at all).
+	if !injectNeeded {
+		hasGhAuth := false
+		for _, e := range parent {
+			if strings.HasPrefix(e, "GH_TOKEN=") || strings.HasPrefix(e, "GITHUB_TOKEN=") {
+				hasGhAuth = true
+				break
+			}
+		}
+		if !hasGhAuth {
+			return nil
+		}
+	}
+
+	env := make([]string, 0, len(parent)+1)
+	for _, e := range parent {
+		if strings.HasPrefix(e, "GH_TOKEN=") || strings.HasPrefix(e, "GITHUB_TOKEN=") {
+			continue
+		}
+		env = append(env, e)
+	}
+	if injectNeeded {
+		env = append(env, "GITHUB_TOKEN="+token)
+	}
+	return env
 }
 
 // RepoAllowlist is a set of allowed org/repo pairs.

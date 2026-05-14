@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -475,6 +478,127 @@ func TestTokenSanitisedInOutput(t *testing.T) {
 	}
 	if !strings.Contains(out, "[REDACTED]") {
 		t.Error("expected [REDACTED] in output")
+	}
+}
+
+// --- DefaultExecFnWithToken end-to-end env injection ---
+//
+// These tests cover the production path established by bridge#141 +
+// the Copilot review on PR #174. The pure-function gating + filter
+// logic is unit-tested in exec_internal_test.go via buildGhChildEnv
+// directly; the tests below verify end-to-end subprocess behaviour
+// using a temp `gh` stub script, which exercises the path where
+// Go's exec.CommandContext actually applies Cmd.Env to the child.
+
+// makeGhStub writes a shell script named `gh` into a fresh temp
+// directory and returns its full path. The script prints the
+// child's gh-auth env vars in a stable format so tests can assert
+// on exact content. Used to verify DefaultExecFnWithToken's
+// filepath.Base("gh") gating end-to-end without needing the real
+// gh CLI in the test environment.
+func makeGhStub(t *testing.T) string {
+	t.Helper()
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("no /bin/sh on this host — skipping subprocess test")
+	}
+	dir := t.TempDir()
+	stub := filepath.Join(dir, "gh")
+	script := []byte(`#!/bin/sh
+printf "GH_TOKEN=%s|GITHUB_TOKEN=%s" "$GH_TOKEN" "$GITHUB_TOKEN"
+`)
+	if err := os.WriteFile(stub, script, 0o755); err != nil {
+		t.Fatalf("write gh stub: %v", err)
+	}
+	return stub
+}
+
+func TestDefaultExecFnWithToken_InjectsForGhCommand_EndToEnd(t *testing.T) {
+	// Single end-to-end subprocess test that proves the helper
+	// (a) gates on filepath.Base("gh"), (b) filters parent's stray
+	// GH_TOKEN/GITHUB_TOKEN, and (c) the injected value reaches the
+	// child via Cmd.Env. The gh stub is invoked by its full path
+	// (/tmp/.../gh) so the test also covers basename-of-a-path
+	// resolution.
+	stub := makeGhStub(t)
+	t.Setenv("GH_TOKEN", "stray_should_be_filtered")
+	t.Setenv("GITHUB_TOKEN", "also_stray")
+
+	fn := chips.DefaultExecFnWithToken("ghp_authoritative_value")
+	out, err := fn(t.Context(), stub)
+	if err != nil {
+		t.Fatalf("exec gh stub: %v", err)
+	}
+	want := "GH_TOKEN=|GITHUB_TOKEN=ghp_authoritative_value"
+	if string(out) != want {
+		t.Errorf("child env mismatch:\n  got:  %q\n  want: %q", out, want)
+	}
+}
+
+func TestDefaultExecFnWithToken_StripsGhAuthFromNonGhCommand(t *testing.T) {
+	// `git log` / `git diff` and any other non-gh subprocess must NOT
+	// receive GH_TOKEN or GITHUB_TOKEN even when those vars are present
+	// in the bridge's own os.Environ() (e.g. dev shell, or
+	// --insecure-token-from-env mode). The parent auth vars are
+	// stripped from ALL subprocess envs; the loaded token is injected
+	// only into gh subprocesses. Verified by setting a sentinel
+	// GITHUB_TOKEN in the parent and asserting it does NOT appear in
+	// the sh child's environment.
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("no /bin/sh on this host")
+	}
+	t.Setenv("GITHUB_TOKEN", "parent_value_must_be_stripped_for_non_gh")
+
+	fn := chips.DefaultExecFnWithToken("ghp_not_for_sh_either")
+	out, err := fn(t.Context(), "sh", "-c", `printf "%s" "$GITHUB_TOKEN"`)
+	if err != nil {
+		t.Fatalf("exec sh: %v", err)
+	}
+	if string(out) != "" {
+		t.Errorf("non-gh command received GITHUB_TOKEN from parent: %q (should be stripped)", out)
+	}
+}
+
+func TestDefaultExecFnWithToken_DoesNotPolluteParentEnv(t *testing.T) {
+	// The whole point of the file-mount path is that the bridge's
+	// own os.Environ() does NOT contain GITHUB_TOKEN. Even when
+	// the helper IS configured to inject (token non-empty + gh
+	// command name), it must inject into the child's Cmd.Env only —
+	// never os.Setenv into the parent. Snapshot before+after.
+	stub := makeGhStub(t)
+	t.Setenv("GITHUB_TOKEN", "")
+	if v := os.Getenv("GITHUB_TOKEN"); v != "" {
+		t.Fatalf("test setup: GITHUB_TOKEN should be empty pre-call, got %q", v)
+	}
+
+	fn := chips.DefaultExecFnWithToken("ghp_must_not_leak_into_parent")
+	if _, err := fn(t.Context(), stub); err != nil {
+		t.Fatalf("exec gh stub: %v", err)
+	}
+
+	if v := os.Getenv("GITHUB_TOKEN"); v != "" {
+		t.Errorf("parent os.Environ() polluted by DefaultExecFnWithToken: GITHUB_TOKEN=%q", v)
+	}
+}
+
+func TestDefaultExecFnWithToken_EmptyTokenStillStripsParentGhAuth(t *testing.T) {
+	// Empty token means no injection, but GH_TOKEN / GITHUB_TOKEN
+	// present in the parent env must still be stripped from the
+	// subprocess — even for a gh command. The "empty token" path
+	// corresponds to chips.enabled=false (no secret configured);
+	// real gh calls don't run in that state (stub tools fire
+	// instead), but the subprocess env contract holds regardless.
+	stub := makeGhStub(t)
+	t.Setenv("GITHUB_TOKEN", "parent_must_be_stripped_for_empty_token")
+
+	fn := chips.DefaultExecFnWithToken("")
+	out, err := fn(t.Context(), stub)
+	if err != nil {
+		t.Fatalf("exec gh stub: %v", err)
+	}
+	// Stub prints GH_TOKEN=$GH_TOKEN|GITHUB_TOKEN=$GITHUB_TOKEN;
+	// both must be empty — parent auth stripped, nothing injected.
+	if string(out) != "GH_TOKEN=|GITHUB_TOKEN=" {
+		t.Errorf("empty token: parent GH auth leaked:\n  got:  %q\n  want: %q", out, "GH_TOKEN=|GITHUB_TOKEN=")
 	}
 }
 
