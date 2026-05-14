@@ -102,17 +102,23 @@ func ExecuteWithSandbox(ctx context.Context, tool ToolDefinition, input json.Raw
 
 	// Audit record — emitted before execution so an in-flight panic or
 	// timeout still leaves a trail of the attempted invocation. The
-	// argv field is redacted using meta.Secrets to keep tokens out of
-	// the log destination (stdout, journald, downstream collectors)
-	// AND truncated to MaxOutputLen so a tool with a giant input
-	// payload cannot blow up downstream collectors or smuggle large
-	// non-secret-but-sensitive content past the redaction layer.
+	// argv field is first substring-redacted via meta.Secrets (known
+	// tokens) then pattern-sanitised via redact.Sanitise (token shapes
+	// not known in advance, e.g. prompt-injected credentials) to keep
+	// both classes of sensitive value out of the log destination.
+	// Two caps apply in sequence: redact.Sanitise silently truncates at
+	// redact.MaxSanitiserInputBytes (65536) without a marker, then
+	// truncateForLog caps at cfg.MaxOutputLen and appends "[truncated]"
+	// if it fires. When cfg.MaxOutputLen > 65536, only the Sanitise cap
+	// applies and no marker is emitted — operators reading the field
+	// should be aware that absence of "[truncated]" does not guarantee
+	// the full argv was logged.
 	logger.Info("audit: tool invoked",
 		"tool", meta.ToolName,
 		"crew", meta.CrewID,
 		"room", meta.RoomID,
 		"mutation", meta.Mutation,
-		"argv_redacted", truncateForLog(redact.Redact(string(input), meta.Secrets...), cfg.MaxOutputLen),
+		"argv_redacted", truncateForLog(redact.Sanitise(redact.Redact(string(input), meta.Secrets...)), cfg.MaxOutputLen),
 	)
 
 	start := time.Now()
