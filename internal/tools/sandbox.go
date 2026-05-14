@@ -102,11 +102,13 @@ func ExecuteWithSandbox(ctx context.Context, tool ToolDefinition, input json.Raw
 
 	// Audit record — emitted before execution so an in-flight panic or
 	// timeout still leaves a trail of the attempted invocation. The
-	// argv field is redacted using meta.Secrets to keep tokens out of
-	// the log destination (stdout, journald, downstream collectors)
-	// AND truncated to MaxOutputLen so a tool with a giant input
-	// payload cannot blow up downstream collectors or smuggle large
-	// non-secret-but-sensitive content past the redaction layer.
+	// argv field is first substring-redacted via meta.Secrets (known
+	// tokens) then pattern-sanitised via redact.Sanitise (token shapes
+	// not known in advance, e.g. prompt-injected credentials) to keep
+	// both classes of sensitive value out of the log destination.
+	// The result is then truncated to MaxOutputLen so a tool with a
+	// giant input payload cannot blow up downstream collectors or
+	// smuggle large non-secret-but-sensitive content past the layers.
 	logger.Info("audit: tool invoked",
 		"tool", meta.ToolName,
 		"crew", meta.CrewID,

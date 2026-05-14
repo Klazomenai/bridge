@@ -346,6 +346,12 @@ func TestAuditRecordSanitisesPatternTokensInArgv(t *testing.T) {
 	if strings.Contains(out, injectedToken) {
 		t.Errorf("pattern-shaped token leaked into argv_redacted despite Sanitise layer:\n%s", out)
 	}
+	// Positive: REDACTED must appear in the audit record, proving the
+	// Sanitise layer fired and the argv_redacted field is present with
+	// the replacement value (not silently omitted or blanked).
+	if !strings.Contains(out, "REDACTED") {
+		t.Errorf("expected REDACTED sentinel in audit record argv_redacted:\n%s", out)
+	}
 }
 
 func TestAuditRecordUsesDefaultLoggerWhenMetaLoggerNil(t *testing.T) {
