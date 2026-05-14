@@ -1569,20 +1569,34 @@ func TestDelegationDepthExceededTokenShapeNotInLog(t *testing.T) {
 		t.Errorf("normalised crew ID leaked into slog output:\n%s", logged)
 	}
 
-	// Positive (slog, per-line): each slog line for the delegation-specific
-	// messages ("following delegation", "delegation depth exceeded") must
-	// contain REDACTED in the "to" field. Checking per-line isolates these
-	// sites from the Route fallback warnings (which also log REDACTED under
-	// "requested", not "to", and are a separate slog site).
+	// Positive (slog, per-line): each delegation-specific slog line must
+	// contain REDACTED in the "to" field. Count occurrences to assert the
+	// expected slog sites fired: 2 "following delegation" (depths 0 and 1)
+	// and 1 "delegation depth exceeded" (depth 2). Counting prevents the
+	// loop from being vacuous if the log messages are omitted or renamed.
+	var followCount, exceededCount int
 	for _, line := range strings.Split(logged, "\n") {
 		if line == "" {
 			continue
 		}
-		if strings.Contains(line, "following delegation") || strings.Contains(line, "delegation depth exceeded") {
+		if strings.Contains(line, "following delegation") {
+			followCount++
 			if !strings.Contains(line, "REDACTED") {
-				t.Errorf("delegation slog line missing REDACTED sentinel:\n%s", line)
+				t.Errorf("\"following delegation\" slog line missing REDACTED sentinel:\n%s", line)
 			}
 		}
+		if strings.Contains(line, "delegation depth exceeded") {
+			exceededCount++
+			if !strings.Contains(line, "REDACTED") {
+				t.Errorf("\"delegation depth exceeded\" slog line missing REDACTED sentinel:\n%s", line)
+			}
+		}
+	}
+	if followCount != 2 {
+		t.Errorf("expected 2 \"following delegation\" slog lines, got %d; logged:\n%s", followCount, logged)
+	}
+	if exceededCount != 1 {
+		t.Errorf("expected 1 \"delegation depth exceeded\" slog line, got %d; logged:\n%s", exceededCount, logged)
 	}
 
 	// Positive (response text): depth-limit fallback must contain REDACTED,
@@ -1596,5 +1610,52 @@ func TestDelegationDepthExceededTokenShapeNotInLog(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("expected depth-limit fallback with REDACTED sentinel in responses, got: %+v", responses)
+	}
+}
+
+// TestDelegationFailedTokenShapeNotInLog verifies that the
+// slog.Warn("orchestrator: delegation failed") site in handleWithDepth
+// does not emit the raw token-shaped crew ID when the recursive call
+// returns an API error. A per-call error on the second mock call triggers
+// the delegation-failed branch without relying on depth exhaustion.
+func TestDelegationFailedTokenShapeNotInLog(t *testing.T) {
+	var buf bytes.Buffer
+	prevDefault := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prevDefault) })
+
+	toolReg := newToolRegistry()
+	const injectedCrewID = "ghp_cccccccccccccccccccccccccccccccccccccccccc"
+	delegateInput := json.RawMessage(fmt.Sprintf(`{"crew":%q,"context":"injected"}`, injectedCrewID))
+
+	// Call 0 (depth 0): returns delegation → follows to depth 1.
+	// Call 1 (depth 1): API error → triggers "delegation failed" Warn.
+	mock := &mockClaudeClient{
+		responses:  []*anthropic.Message{toolUseResponse("tu_1", "delegate_to_crew", delegateInput)},
+		callErrors: []error{nil, errors.New("mock API error")},
+	}
+	o := newTestOrchestratorWithMock(t, toolReg, mock)
+
+	_, _ = o.Handle(t.Context(), "!room:server", "test", "maren")
+
+	logged := buf.String()
+	if strings.Contains(logged, injectedCrewID) {
+		t.Errorf("normalised crew ID leaked into slog output:\n%s", logged)
+	}
+
+	var failedCount int
+	for _, line := range strings.Split(logged, "\n") {
+		if line == "" {
+			continue
+		}
+		if strings.Contains(line, "delegation failed") {
+			failedCount++
+			if !strings.Contains(line, "REDACTED") {
+				t.Errorf("\"delegation failed\" slog line missing REDACTED sentinel:\n%s", line)
+			}
+		}
+	}
+	if failedCount != 1 {
+		t.Errorf("expected 1 \"delegation failed\" slog line, got %d; logged:\n%s", failedCount, logged)
 	}
 }
